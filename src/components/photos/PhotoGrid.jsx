@@ -1,0 +1,190 @@
+
+import React, { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { format } from "date-fns";
+import { Download, Calendar, Smartphone, X, ZoomIn, CheckCircle2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+
+export default function PhotoGrid({ photos, isLoading, isSelectionMode, selectedPhotos, onPhotoClick }) {
+  const [modalPhoto, setModalPhoto] = useState(null);
+
+  const formatFileSize = (bytes) => {
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    if (bytes === 0) return '0 Bytes';
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+  };
+  
+  const handleClick = (photo) => {
+    if (isSelectionMode) {
+      onPhotoClick(photo);
+    } else {
+      setModalPhoto(photo);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 p-6">
+        {Array(20).fill(0).map((_, i) => (
+          <div key={i} className="aspect-square bg-slate-200 rounded-lg animate-pulse" />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 p-6">
+        <AnimatePresence>
+          {photos.map((photo, index) => {
+            const isSelected = selectedPhotos.has(photo.id);
+            return (
+              <motion.div
+                key={photo.id}
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: index * 0.05 }}
+                className={`group relative aspect-square bg-white rounded-lg overflow-hidden shadow-sm hover:shadow-lg transition-all duration-300 cursor-pointer ${
+                  isSelected ? 'ring-2 ring-blue-500 ring-offset-2' : ''
+                }`}
+                onClick={() => handleClick(photo)}
+              >
+                <img
+                  src={photo.file_url}
+                  alt={photo.file_name}
+                  className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                  loading="lazy"
+                />
+                
+                <AnimatePresence>
+                  {isSelected && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.5 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.5 }}
+                      className="absolute inset-0 bg-blue-500/30 flex items-center justify-center"
+                    >
+                      <CheckCircle2 className="w-10 h-10 text-white drop-shadow-lg" />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {!isSelected && (
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all duration-300 flex items-center justify-center">
+                    <ZoomIn className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                  </div>
+                )}
+
+                {/* Status badge */}
+                <div className="absolute top-2 right-2">
+                  <Badge 
+                    variant={photo.sync_status === 'synced' ? 'default' : 'secondary'} 
+                    className="text-xs"
+                  >
+                    {photo.sync_status === 'synced' ? 'Synced' : 'Pending'}
+                  </Badge>
+                </div>
+
+                {/* Date overlay */}
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-3">
+                  <p className="text-white text-xs font-medium">
+                    {format(new Date(photo.taken_date), 'MMM d, yyyy')}
+                  </p>
+                </div>
+              </motion.div>
+            )
+          })}
+        </AnimatePresence>
+      </div>
+
+      {photos.length === 0 && !isLoading && (
+        <div className="flex flex-col items-center justify-center py-20">
+          <Smartphone className="w-16 h-16 text-slate-300 mb-4" />
+          <h3 className="text-lg font-semibold text-slate-600 mb-2">No Photos Found</h3>
+          <p className="text-slate-500 text-center max-w-md">
+            Photos will appear here once they're synced from your connected devices
+          </p>
+        </div>
+      )}
+
+      {/* Photo Modal */}
+      <AnimatePresence>
+        {modalPhoto && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
+            onClick={() => setModalPhoto(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-xl max-w-4xl max-h-[90vh] overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between p-4 border-b">
+                <div>
+                  <h3 className="font-semibold text-slate-900">{modalPhoto.file_name}</h3>
+                  <div className="flex items-center gap-4 text-sm text-slate-500 mt-1">
+                    <div className="flex items-center gap-1">
+                      <Calendar className="w-4 h-4" />
+                      {format(new Date(modalPhoto.taken_date), 'PPP')}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Smartphone className="w-4 h-4" />
+                      {modalPhoto.device_id}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" asChild>
+                    <a href={modalPhoto.file_url} download={modalPhoto.file_name}>
+                      <Download className="w-4 h-4 mr-2" />
+                      Download
+                    </a>
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setModalPhoto(null)}>
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+              
+              <div className="p-4">
+                <img
+                  src={modalPhoto.file_url}
+                  alt={modalPhoto.file_name}
+                  className="max-w-full max-h-[60vh] mx-auto rounded-lg"
+                />
+                
+                <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  <div>
+                    <p className="text-slate-500">Dimensions</p>
+                    <p className="font-medium">{modalPhoto.width} × {modalPhoto.height}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">File Size</p>
+                    <p className="font-medium">{formatFileSize(modalPhoto.file_size)}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Synced</p>
+                    <p className="font-medium">{format(new Date(modalPhoto.synced_date), 'PPp')}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Status</p>
+                    <Badge variant={modalPhoto.sync_status === 'synced' ? 'default' : 'secondary'}>
+                      {modalPhoto.sync_status}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  );
+}
