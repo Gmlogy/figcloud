@@ -1,136 +1,98 @@
-
 import React, { useState, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Plus, Filter } from "lucide-react";
+import { Search, Plus } from "lucide-react";
 import { motion } from "framer-motion";
+import { getCurrentUser } from 'aws-amplify/auth';
+import { api } from '@/lib/api';
 
 import ConversationList from "../components/messages/ConversationList";
 import MessageThread from "../components/messages/MessageThread";
 import StatsOverview from "../components/messages/StatsOverview";
 import SecurityBanner from "../components/messages/SecurityBanner";
-import PhoneVerificationModal from "../components/auth/PhoneVerificationModal";
-import FirstSyncProgress from "../components/sync/FirstSyncProgress";
 
 export default function DashboardPage() {
   const [messages, setMessages] = useState([]);
-  const [selectedThread, setSelectedThread] = useState(null);
+  const [selectedThreadId, setSelectedThreadId] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState("all");
   const [isLoading, setIsLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState(null);
-  const [showPhoneVerification, setShowPhoneVerification] = useState(false);
-  const [showSyncProgress, setShowSyncProgress] = useState(false);
 
   useEffect(() => {
-   // loadUserAndMessages();
+    loadInitialData();
   }, []);
 
-  
-
-  const loadMessages = async (userPhone) => {
+  const loadInitialData = async () => {
+    setIsLoading(true);
     try {
-      const data = await Message.filter({ created_by: userPhone }, "-timestamp", 100);
-      setMessages(data);
+      const { signInDetails } = await getCurrentUser();
+      const user = { 
+        phone_number: signInDetails.loginId 
+      };
+      setCurrentUser(user);
+      const fetchedMessages = await api.get('/messages');
+      setMessages(fetchedMessages);
     } catch (error) {
-      console.error("Error loading messages:", error);
+      console.error("Error loading initial data:", error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleVerificationComplete = (phoneNumber) => {
-    setShowPhoneVerification(false);
-    setShowSyncProgress(true);
-  };
-
-  const handleSyncComplete = () => {
-    setShowSyncProgress(false);
-    // Reload everything after sync
-    loadUserAndMessages();
-  };
-
-  // Show verification modal if needed
-  /* --- Login page commented out for preview ---
-  if (showPhoneVerification) {
-    return <PhoneVerificationModal onVerificationComplete={handleVerificationComplete} />;
-  }
-  */
-
-  // Show sync progress if needed
-  if (showSyncProgress) {
-    return <FirstSyncProgress phoneNumber={currentUser?.phone_number} onSyncComplete={handleSyncComplete} />;
-  }
-
-  // Group messages by thread_id
   const conversations = messages.reduce((acc, message) => {
-    if (!acc[message.thread_id]) {
-      acc[message.thread_id] = {
-        thread_id: message.thread_id,
-        contact_name: message.contact_name,
-        group_name: message.group_name,
-        phone_number: message.phone_number,
+    const threadId = message.threadId;
+    if (!acc[threadId]) {
+      acc[threadId] = {
+        thread_id: threadId,
+        contact_name: message.contactName || message.address, 
+        phone_number: message.address,
         messages: [],
         last_message: null,
         unread_count: 0,
-        is_group: !!message.group_name,
-        participants: new Map(),
-        participant_phones: new Set()
+        is_group: false,
       };
     }
-    acc[message.thread_id].messages.push(message);
     
-    acc[message.thread_id].participants.set(message.phone_number, message.contact_name);
-    acc[message.thread_id].participant_phones.add(message.phone_number);
+    acc[threadId].messages.push({
+        id: message.timestamp,
+        message_content: message.body,
+        timestamp: message.timestamp,
+        is_sent: message.messageType === 'SENT',
+        sync_status: 'synced',
+    });
     
-    if (!message.is_sent && message.sync_status === 'pending') {
-      acc[message.thread_id].unread_count++;
-    }
-    
-    if (!acc[message.thread_id].last_message || 
-        new Date(message.timestamp) > new Date(acc[message.thread_id].last_message.timestamp)) {
-      acc[message.thread_id].last_message = message;
+    if (!acc[threadId].last_message || new Date(message.timestamp) > new Date(acc[threadId].last_message.timestamp)) {
+      acc[threadId].last_message = {
+        ...message,
+        message_content: message.body,
+        is_sent: message.messageType === 'SENT',
+      };
     }
     
     return acc;
   }, {});
 
   Object.values(conversations).forEach(conv => {
-    conv.participant_count = conv.participant_phones.size;
-    
-    if (conv.is_group && conv.group_name) {
-      conv.display_name = conv.group_name;
-      conv.display_subtitle = Array.from(conv.participants.values()).join(', ');
-    } else {
       conv.display_name = conv.contact_name || conv.phone_number;
-      conv.display_subtitle = conv.phone_number;
-    }
+      conv.messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
   });
 
   const conversationList = Object.values(conversations)
     .sort((a, b) => new Date(b.last_message?.timestamp) - new Date(a.last_message?.timestamp))
     .filter(conv => {
-      if (searchQuery) {
-        const matchesSearch = conv.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-               conv.display_subtitle?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-               conv.last_message?.message_content?.toLowerCase().includes(searchQuery.toLowerCase());
-        if (!matchesSearch) return false;
-      }
-      
-      switch (activeFilter) {
-        case 'unread':
-          return conv.unread_count > 0;
-        case 'groups':
-          return conv.is_group;
-        case 'all':
-        default:
-          return true;
-      }
+        if (searchQuery) {
+            return conv.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                   conv.last_message?.body?.toLowerCase().includes(searchQuery.toLowerCase());
+        }
+        return true;
     });
 
   const refreshMessages = async () => {
-    if (currentUser) {
-      await loadMessages(currentUser.phone_number);
-    }
+      await loadInitialData();
   };
+  
+  const selectedConversation = selectedThreadId ? conversations[selectedThreadId] : null;
 
   return (
     <div className="h-screen flex bg-slate-50">
@@ -170,17 +132,17 @@ export default function DashboardPage() {
         <div className="flex-1 overflow-y-auto bg-white">
           <ConversationList
             conversations={conversationList}
-            selectedThread={selectedThread}
-            onSelectThread={setSelectedThread}
+            selectedThread={selectedThreadId}
+            onSelectThread={setSelectedThreadId}
             isLoading={isLoading}
           />
         </div>
       </div>
 
       <div className="flex-1 flex flex-col">
-        {selectedThread ? (
+        {selectedConversation ? (
           <MessageThread
-            conversation={conversations[selectedThread]}
+            conversation={selectedConversation}
             currentUser={currentUser}
             onRefresh={refreshMessages}
           />
@@ -199,14 +161,13 @@ export default function DashboardPage() {
                 Choose a conversation from the list to view your synced messages
               </p>
               
-              {/* Fig Phone Connection Status */}
               <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg max-w-md mx-auto">
                 <div className="flex items-center justify-center gap-2 mb-2">
                   <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
                   <span className="text-sm font-medium text-green-800">Fig Phone Connected</span>
                 </div>
                 <p className="text-xs text-green-600">
-                  Real-time sync active • Keep your Fig Phone powered on and connected to mobile data
+                  Real-time sync active • Keep your Fig Phone powered on and connected.
                 </p>
               </div>
             </motion.div>

@@ -5,7 +5,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Phone, Video, MoreVertical, Send, Check, Clock, Shield, Wifi } from "lucide-react";
+import { api } from '@/lib/api'; // Import our new API helper
+import { Phone, Video, MoreVertical, Send, Check, Clock, Wifi } from "lucide-react";
 
 const MessageStatusIcon = ({ message }) => {
   if (!message.is_sent) return null;
@@ -28,7 +29,30 @@ export default function MessageThread({ conversation, currentUser, onRefresh }) 
 
   if (!conversation || !currentUser) return null;
 
-  
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
+    if (!newMessage.trim()) return;
+
+    setIsSending(true);
+
+    try {
+      // Call our new POST /messages endpoint
+      await api.post('/messages', {
+        threadId: conversation.thread_id,
+        body: newMessage.trim(),
+      });
+      
+      setNewMessage(""); // Clear the input field
+      onRefresh(); // Tell the dashboard to reload all messages to show the new one
+      
+    } catch (error) {
+      console.error("Failed to send message:", error);
+      // In a real app, you would show an error toast to the user here
+      alert("Failed to send message. Please try again.");
+    } finally {
+      setIsSending(false);
+    }
+  };
 
   const formatMessageTime = (timestamp) => {
     const date = new Date(timestamp);
@@ -48,13 +72,13 @@ export default function MessageThread({ conversation, currentUser, onRefresh }) 
     return phone ? phone.slice(-2) : '??';
   };
 
+  // The sortedMessages logic is already correct from your provided file.
   const sortedMessages = [...conversation.messages].sort(
     (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
   );
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header with contact info and connection status */}
       <div className="border-b p-4 bg-white">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
@@ -86,7 +110,6 @@ export default function MessageThread({ conversation, currentUser, onRefresh }) 
           </div>
         </div>
 
-        {/* Connection status bar */}
         <div className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg">
           <div className="flex items-center gap-2">
             <Wifi className="w-4 h-4 text-green-600" />
