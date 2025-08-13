@@ -34,6 +34,25 @@ export default function PhotoGrid({ photos, isLoading, isSelectionMode, selected
       }
   };
 
+  const handleModalDownload = async (photo) => {
+    try {
+      const response = await fetch(photo.file_url);
+      if (!response.ok) throw new Error('Network response was not ok.');
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', photo.file_name);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Download failed:", error);
+      alert("Download failed. Please try again."); // Simple error feedback
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 p-6">
@@ -49,7 +68,6 @@ export default function PhotoGrid({ photos, isLoading, isSelectionMode, selected
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 p-6">
         <AnimatePresence>
           {photos.map((photo, index) => {
-            // --- FIX 4: Use 'photoId' to check if the item is selected ---
             const isSelected = selectedPhotos.has(photo.photoId);
             return (
               <motion.div
@@ -149,11 +167,9 @@ export default function PhotoGrid({ photos, isLoading, isSelectionMode, selected
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" asChild>
-                    <a href={modalPhoto.file_url} download={modalPhoto.file_name}>
-                      <Download className="w-4 h-4 mr-2" />
-                      Download
-                    </a>
+                  <Button variant="outline" size="sm" onClick={() => handleModalDownload(modalPhoto)}>
+                    <Download className="w-4 h-4 mr-2" />
+                    Download
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => setModalPhoto(null)}>
                     <X className="w-4 h-4" />

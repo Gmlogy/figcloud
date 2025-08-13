@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,7 +5,6 @@ import { Badge } from "@/components/ui/badge";
 import { 
   Smartphone, 
   Wifi, 
-  Shield, 
   RefreshCw, 
   CheckCircle, 
   AlertCircle,
@@ -17,24 +15,36 @@ import {
   XCircle
 } from "lucide-react";
 import { format } from "date-fns";
-import { motion } from "framer-motion";
+import { api } from '@/lib/api'; // Import your API helper
 
 export default function SyncStatusPage() {
   const [syncSessions, setSyncSessions] = useState([]);
   const [allowedBuildPrefixes, setAllowedBuildPrefixes] = useState(new Set());
   const [messages, setMessages] = useState([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-   // loadData();
+    loadData();
   }, []);
 
-  
+  const loadData = async () => {
+    if (!isRefreshing) setIsLoading(true);
+    try {
+      const response = await api.get('/sync-status');
+      setSyncSessions(response.syncSessions || []);
+      setAllowedBuildPrefixes(new Set(response.allowedBuildPrefixes || []));
+      setMessages(response.messages || []);
+    } catch (error) {
+      console.error("Failed to load sync status:", error);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
 
   const isDeviceAllowed = (buildNumber) => {
     if (!buildNumber) return false;
-    // Check if the device's build number starts with any of the whitelisted prefixes.
     for (const prefix of allowedBuildPrefixes) {
       if (buildNumber.startsWith(prefix)) {
         return true;
@@ -44,6 +54,7 @@ export default function SyncStatusPage() {
   };
 
   const handleRefresh = async () => {
+    setIsRefreshing(true);
     await loadData();
   };
 
@@ -94,7 +105,6 @@ export default function SyncStatusPage() {
           </Button>
         </div>
 
-        {/* Overview Cards */}
         <div className="grid md:grid-cols-4 gap-6 mb-8">
             <Card className="bg-white/80 backdrop-blur-sm border-0 shadow-lg">
               <CardContent className="p-6">
@@ -158,7 +168,7 @@ export default function SyncStatusPage() {
                 </CardTitle>
             </CardHeader>
             <CardContent>
-                {activeSession ? (
+                {isLoading ? <p>Loading...</p> : activeSession ? (
                     <div className="flex flex-col md:flex-row items-start md:items-center justify-between p-4 bg-blue-50 border border-blue-200 rounded-lg">
                         <div className="flex items-center gap-4">
                             <Smartphone className="w-10 h-10 text-blue-600" />
@@ -195,73 +205,6 @@ export default function SyncStatusPage() {
                 )}
             </CardContent>
         </Card>
-
-        {unsupportedSessions.length > 0 && (
-          <Card className="bg-red-50 border-red-200 shadow-lg mb-8">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-red-700">
-                <XCircle className="w-5 h-5" />
-                Unsupported Devices Detected
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-red-800 mb-4">The following devices are not registered Fig Phones and have been blocked. Please use a verified Fig Phone to sync your data.</p>
-              <div className="space-y-3">
-                {unsupportedSessions.map((session) => (
-                  <div key={session.id} className="flex items-center justify-between p-3 bg-white rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center">
-                        <Smartphone className="w-5 h-5 text-slate-500" />
-                      </div>
-                      <div>
-                        <p className="font-semibold text-slate-900">{session.device_name}</p>
-                        <p className="text-xs text-slate-500">Build: {session.build_number}</p>
-                      </div>
-                    </div>
-                    <Badge className={getStatusColor(session.sync_status, false)}>
-                      {getStatusIcon(session.sync_status, false)}
-                      <span className="ml-1">Unsupported</span>
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {inactiveSessions.length > 0 && (
-             <Card className="bg-white/80 backdrop-blur-sm border-0 shadow-lg">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <PowerOff className="w-5 h-5" />
-                  Previous Fig Phones
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                  <div className="space-y-4">
-                    {inactiveSessions.map((session) => (
-                      <div key={session.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center">
-                            <Smartphone className="w-5 h-5 text-slate-500" />
-                          </div>
-                          <div>
-                            <p className="font-semibold text-slate-900">{session.device_name}</p>
-                            <p className="text-sm text-slate-500">
-                              Last seen: {session.last_sync ? format(new Date(session.last_sync), 'MMM d, h:mm a') : 'Unknown'}
-                            </p>
-                          </div>
-                        </div>
-                        <Badge className={getStatusColor(session.sync_status, true)}>
-                          {getStatusIcon(session.sync_status, true)}
-                          <span className="ml-1 capitalize">{session.sync_status}</span>
-                        </Badge>
-                      </div>
-                    ))}
-                  </div>
-              </CardContent>
-            </Card>
-        )}
       </div>
     </div>
   );

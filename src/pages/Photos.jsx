@@ -72,7 +72,6 @@ export default function PhotosPage() {
   const handlePhotoClick = (photo) => {
     if (isSelectionMode) {
       const newSelection = new Set(selectedPhotos);
-      // --- FIX 1: Use the correct unique ID 'photoId' for selection ---
       if (newSelection.has(photo.photoId)) {
         newSelection.delete(photo.photoId);
       } else {
@@ -86,7 +85,6 @@ export default function PhotosPage() {
     if (selectedPhotos.size === filteredPhotos.length && filteredPhotos.length > 0) {
       setSelectedPhotos(new Set());
     } else {
-      // --- FIX 2: Use the correct unique ID 'photoId' for select all ---
       const allPhotoIds = new Set(filteredPhotos.map(p => p.photoId));
       setSelectedPhotos(allPhotoIds);
     }
@@ -97,24 +95,37 @@ export default function PhotosPage() {
     setIsSelectionMode(false);
   };
 
-  const handleDownloadSelected = () => {
+  // --- START OF FIX: REPLACED DOWNLOAD LOGIC ---
+  const handleDownloadSelected = async () => {
     if (selectedPhotos.size === 0) return;
-    
-    // --- FIX 3: Implement proper download logic ---
-    photos.forEach(photo => {
-      if (selectedPhotos.has(photo.photoId)) {
-        // Create a temporary anchor element
-        const link = document.createElement('a');
-        link.href = photo.file_url; // The presigned URL
-        link.download = photo.file_name; // The attribute that forces download
+
+    for (const photoId of selectedPhotos) {
+      const photo = photos.find(p => p.photoId === photoId);
+      if (!photo) continue;
+
+      try {
+        const response = await fetch(photo.file_url);
+        if (!response.ok) throw new Error('Network response was not ok.');
         
-        // Append to the DOM, click it, and then remove it
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', photo.file_name);
+        
         document.body.appendChild(link);
         link.click();
-        document.body.removeChild(link);
+        
+        link.parentNode.removeChild(link);
+        window.URL.revokeObjectURL(url);
+      } catch (error) {
+        console.error(`Download failed for ${photo.file_name}:`, error);
+        // Optionally, show an error toast to the user here.
       }
-    });
+    }
   };
+  // --- END OF FIX ---
   
   const handleDeleteSelected = () => {
     console.warn("Delete functionality is not implemented yet.");
