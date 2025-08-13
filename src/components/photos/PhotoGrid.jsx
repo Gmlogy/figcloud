@@ -1,4 +1,3 @@
-
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
@@ -10,6 +9,7 @@ export default function PhotoGrid({ photos, isLoading, isSelectionMode, selected
   const [modalPhoto, setModalPhoto] = useState(null);
 
   const formatFileSize = (bytes) => {
+    if (bytes === null || bytes === undefined || isNaN(bytes)) return 'N/A';
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     if (bytes === 0) return '0 Bytes';
     const i = Math.floor(Math.log(bytes) / Math.log(1024));
@@ -22,6 +22,16 @@ export default function PhotoGrid({ photos, isLoading, isSelectionMode, selected
     } else {
       setModalPhoto(photo);
     }
+  };
+
+  const safeFormatDate = (date, formatString) => {
+      try {
+          const d = new Date(date);
+          if (isNaN(d.getTime())) return "Invalid date";
+          return format(d, formatString);
+      } catch (e) {
+          return "Invalid date";
+      }
   };
 
   if (isLoading) {
@@ -39,10 +49,11 @@ export default function PhotoGrid({ photos, isLoading, isSelectionMode, selected
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 p-6">
         <AnimatePresence>
           {photos.map((photo, index) => {
-            const isSelected = selectedPhotos.has(photo.id);
+            // --- FIX 4: Use 'photoId' to check if the item is selected ---
+            const isSelected = selectedPhotos.has(photo.photoId);
             return (
               <motion.div
-                key={photo.id}
+                key={photo.photoId}
                 initial={{ opacity: 0, scale: 0.8 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: index * 0.05 }}
@@ -77,20 +88,18 @@ export default function PhotoGrid({ photos, isLoading, isSelectionMode, selected
                   </div>
                 )}
 
-                {/* Status badge */}
                 <div className="absolute top-2 right-2">
                   <Badge 
-                    variant={photo.sync_status === 'synced' ? 'default' : 'secondary'} 
+                    variant={'default'} 
                     className="text-xs"
                   >
-                    {photo.sync_status === 'synced' ? 'Synced' : 'Pending'}
+                    Synced
                   </Badge>
                 </div>
 
-                {/* Date overlay */}
                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-3">
                   <p className="text-white text-xs font-medium">
-                    {format(new Date(photo.taken_date), 'MMM d, yyyy')}
+                    {safeFormatDate(photo.taken_date, 'MMM d, yyyy')}
                   </p>
                 </div>
               </motion.div>
@@ -109,7 +118,6 @@ export default function PhotoGrid({ photos, isLoading, isSelectionMode, selected
         </div>
       )}
 
-      {/* Photo Modal */}
       <AnimatePresence>
         {modalPhoto && (
           <motion.div
@@ -132,11 +140,11 @@ export default function PhotoGrid({ photos, isLoading, isSelectionMode, selected
                   <div className="flex items-center gap-4 text-sm text-slate-500 mt-1">
                     <div className="flex items-center gap-1">
                       <Calendar className="w-4 h-4" />
-                      {format(new Date(modalPhoto.taken_date), 'PPP')}
+                      {safeFormatDate(modalPhoto.taken_date, 'PPP')}
                     </div>
                     <div className="flex items-center gap-1">
                       <Smartphone className="w-4 h-4" />
-                      {modalPhoto.device_id}
+                      {modalPhoto.device_id || 'Unknown Device'}
                     </div>
                   </div>
                 </div>
@@ -171,12 +179,12 @@ export default function PhotoGrid({ photos, isLoading, isSelectionMode, selected
                   </div>
                   <div>
                     <p className="text-slate-500">Synced</p>
-                    <p className="font-medium">{format(new Date(modalPhoto.synced_date), 'PPp')}</p>
+                    <p className="font-medium">{safeFormatDate(modalPhoto.syncedAt, 'PPp')}</p>
                   </div>
                   <div>
                     <p className="text-slate-500">Status</p>
-                    <Badge variant={modalPhoto.sync_status === 'synced' ? 'default' : 'secondary'}>
-                      {modalPhoto.sync_status}
+                    <Badge variant={'default'}>
+                      Synced
                     </Badge>
                   </div>
                 </div>

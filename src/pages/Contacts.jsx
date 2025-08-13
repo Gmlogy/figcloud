@@ -7,7 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Search, Phone, Mail, Building, RefreshCw, Users, Smartphone, MoreVertical, CheckSquare } from "lucide-react";
 import { format } from "date-fns";
 import { motion } from "framer-motion";
-
+import { api } from '@/lib/api'; // Import your api helper
 import ContactsActionsToolbar from "../components/contacts/ContactsActionsToolbar";
 
 export default function ContactsPage() {
@@ -21,14 +21,31 @@ export default function ContactsPage() {
   const [currentUser, setCurrentUser] = useState(null);
 
   useEffect(() => {
-   // loadUserAndContacts();
+    loadContacts();
   }, []);
 
   useEffect(() => {
     filterContacts();
   }, [contacts, searchQuery]);
 
- 
+  const loadContacts = async () => {
+    // We don't want to show the loading spinner on a manual refresh
+    if (!isRefreshing) {
+      setIsLoading(true);
+    }
+    try {
+      const fetchedContacts = await api.get('/contacts');
+      // Sort contacts alphabetically by full_name
+      fetchedContacts.sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''));
+      setContacts(fetchedContacts);
+    } catch (error) {
+      console.error("Failed to load contacts:", error);
+      // In a real app, you would show an error toast here
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
 
   const filterContacts = () => {
     let filtered = contacts;
@@ -56,9 +73,7 @@ export default function ContactsPage() {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    await loadUserAndContacts();
-    setIsRefreshing(false);
+    await loadContacts();
   };
 
   const getContactInitials = (name) => {
@@ -83,7 +98,7 @@ export default function ContactsPage() {
   const getVisibleContactIds = () => {
     const ids = [];
     Object.values(filteredContacts).forEach(group => {
-      group.forEach(contact => ids.push(contact.id));
+      group.forEach(contact => ids.push(contact.contactId));
     });
     return ids;
   };
@@ -115,7 +130,7 @@ export default function ContactsPage() {
 
   const handleExportVCF = () => {
     let vcfContent = "";
-    const contactsToExport = contacts.filter(contact => selectedContacts.has(contact.id));
+    const contactsToExport = contacts.filter(contact => selectedContacts.has(contact.contactId));
 
     contactsToExport.forEach(contact => {
       vcfContent += "BEGIN:VCARD\n";
@@ -133,7 +148,7 @@ export default function ContactsPage() {
   const handleExportCSV = () => {
     const headers = "Full Name,Phone Number,Email,Company,Job Title";
     let csvRows = [headers];
-    const contactsToExport = contacts.filter(contact => selectedContacts.has(contact.id));
+    const contactsToExport = contacts.filter(contact => selectedContacts.has(contact.contactId));
 
     contactsToExport.forEach(contact => {
       const row = [
@@ -216,12 +231,6 @@ export default function ContactsPage() {
                 <Users className="w-4 h-4" />
                 <span>{contacts.length} contacts synced</span>
               </div>
-              {currentUser && (
-                <div className="flex items-center gap-1">
-                  <Smartphone className="w-4 h-4" />
-                  <span>From {currentUser.phone_number}</span>
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -249,23 +258,23 @@ export default function ContactsPage() {
               </div>
 
               {filteredContacts[letter].map((contact, index) => {
-                const isSelected = selectedContacts.has(contact.id);
+                const isSelected = selectedContacts.has(contact.contactId);
                 return (
                   <motion.div
-                    key={contact.id}
+                    key={contact.contactId}
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: index * 0.02 }}
                     className={`px-4 py-3 border-b border-slate-100 transition-colors cursor-pointer flex items-center gap-4 ${
                       isSelected ? 'bg-blue-50' : 'hover:bg-slate-50'
                     }`}
-                    onClick={() => isSelectionMode && handleContactClick(contact.id)}
+                    onClick={() => isSelectionMode && handleContactClick(contact.contactId)}
                   >
                     <div className="w-10 h-10 flex items-center justify-center">
                       {isSelectionMode ? (
                         <Checkbox
                           checked={isSelected}
-                          onCheckedChange={() => handleContactClick(contact.id)}
+                          onCheckedChange={() => handleContactClick(contact.contactId)}
                           className="w-5 h-5"
                           aria-label={`Select ${contact.full_name}`}
                         />
@@ -282,23 +291,18 @@ export default function ContactsPage() {
                       )}
                     </div>
                     
-                    <div className="flex-1 min-w-0" onClick={() => !isSelectionMode ? {} : handleContactClick(contact.id)}>
-                      <div className="flex items-center justify-between">
+                    <div className="flex-1 min-w-0">
                         <h3 className="font-medium text-slate-900 truncate">
-                          {contact.full_name}
+                          {contact.full_name || 'No Name'}
                         </h3>
-                        {contact.sync_status === 'pending' && (
-                          <Badge variant="secondary" className="text-xs">
-                            Syncing
-                          </Badge>
-                        )}
-                      </div>
 
                       <div className="flex items-center gap-3 mt-1">
-                        <div className="flex items-center gap-1 text-sm text-slate-600">
-                          <Phone className="w-3 h-3" />
-                          <span>{contact.phone_number}</span>
-                        </div>
+                        {contact.phone_number && (
+                          <div className="flex items-center gap-1 text-sm text-slate-600">
+                            <Phone className="w-3 h-3" />
+                            <span>{contact.phone_number}</span>
+                          </div>
+                        )}
                         {contact.email && (
                           <div className="flex items-center gap-1 text-sm text-slate-600">
                             <Mail className="w-3 h-3" />
@@ -314,24 +318,6 @@ export default function ContactsPage() {
                             {contact.job_title ? `${contact.job_title} at ${contact.company}` : contact.company}
                           </span>
                         </div>
-                      )}
-
-                      {contact.additional_phones && contact.additional_phones.length > 0 && (
-                        <div className="text-xs text-blue-600 mt-1">
-                          +{contact.additional_phones.length} more number{contact.additional_phones.length > 1 ? 's' : ''}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex items-center">
-                      {contact.sync_status === 'synced' && (
-                        <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                      )}
-                      {contact.sync_status === 'pending' && (
-                        <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></div>
-                      )}
-                      {contact.sync_status === 'failed' && (
-                        <div className="w-2 h-2 bg-red-500 rounded-full"></div>
                       )}
                     </div>
                   </motion.div>
