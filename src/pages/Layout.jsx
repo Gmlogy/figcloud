@@ -3,7 +3,8 @@
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { createPageUrl } from "@/utils";
-import { MessageSquare, Smartphone, Settings, Shield, Wifi, Users, Camera, Download } from "lucide-react";
+import { MessageSquare, Smartphone, Settings, Shield, Wifi, Users, Camera, Download, LogOut } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Sidebar,
   SidebarContent,
@@ -52,8 +53,16 @@ const navigationItems = [
   },
 ];
 
-export default function Layout({ children, currentPageName }) {
+export default function Layout({ children, currentPageName, signOut }) {
   const location = useLocation();
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+    } catch (error) {
+      console.error('Error signing out: ', error);
+    }
+  };
 
   return (
     <SidebarProvider>
@@ -202,17 +211,29 @@ export default function Layout({ children, currentPageName }) {
             </SidebarGroup>
           </SidebarContent>
 
-          <SidebarFooter className="border-t border-slate-200/50 p-6">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: 'rgb(var(--md-sys-color-primary-container))' }}>
-                <span className="font-medium text-sm" style={{ color: 'rgb(var(--md-sys-color-on-primary-container))' }}>U</span>
+          <SidebarFooter className="border-t border-slate-200/50 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: 'rgb(var(--md-sys-color-primary-container))' }}>
+                  <span className="font-medium text-sm" style={{ color: 'rgb(var(--md-sys-color-on-primary-container))' }}>U</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-sm truncate" style={{ color: 'rgb(var(--md-sys-color-on-surface))' }}>Secure User</p>
+                  <p className="text-xs truncate" style={{ color: 'rgb(var(--md-sys-color-on-surface-variant))' }}>End-to-end encrypted</p>
+                </div>
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-sm truncate" style={{ color: 'rgb(var(--md-sys-color-on-surface))' }}>Secure User</p>
-                <p className="text-xs truncate" style={{ color: 'rgb(var(--md-sys-color-on-surface-variant))' }}>End-to-end encrypted</p>
-              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="rounded-full flex-shrink-0"
+                onClick={handleSignOut}
+                aria-label="Log out"
+              >
+                <LogOut className="w-5 h-5 text-slate-600" />
+              </Button>
             </div>
           </SidebarFooter>
+          {/* --- END OF UPDATED SECTION --- */}
         </Sidebar>
 
         <main className="flex-1 flex flex-col" style={{ background: 'rgb(var(--md-sys-color-background))' }}>

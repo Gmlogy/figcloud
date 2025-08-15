@@ -1,55 +1,79 @@
-
-import React, { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import React, { useState, useEffect, useCallback } from "react";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
 import { 
-  Shield, 
+  User,
   Smartphone, 
-  Bell, 
-  Download, 
   Trash2, 
   LogOut,
   Settings as SettingsIcon,
-  Lock,
   Loader2
 } from "lucide-react";
 import { motion } from "framer-motion";
+import { useToast } from "@/components/ui/use-toast";
+import { api } from '@/lib/api';
+import { format } from "date-fns";
 
 export default function SettingsPage() {
-  const [currentUser, setCurrentUser] = useState(null);
-  const [activeSession, setActiveSession] = useState(null);
+  const [settings, setSettings] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [preferences, setPreferences] = useState({
-    autoSync: true, // Ensuring this defaults to true
-    notifications: true,
-    encryption: true
-  });
+  const [isSaving, setIsSaving] = useState(false);
+  const { toast } = useToast();
+
+  const fetchSettings = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const data = await api.get('/settings');
+      setSettings(data);
+    } catch (error) {
+      console.error("Failed to fetch settings:", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Could not load your settings.",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [toast]);
 
   useEffect(() => {
-   // loadUserAndDevice();
-  }, []);
-
-  
-  
- 
+    fetchSettings();
+  }, [fetchSettings]);
 
   const handlePreferenceChange = async (key, value) => {
-    const newPreferences = { ...preferences, [key]: value };
-    setPreferences(newPreferences);
-    
-    if (currentUser) {
-      await User.updateMyUserData({
-        preferences: {
-          auto_sync: newPreferences.autoSync,
-          notifications: newPreferences.notifications,
-          encryption: newPreferences.encryption
-        }
+    if (!settings) return;
+
+    const newPreferences = { ...settings.preferences, [key]: value };
+    const optimisticSettings = { ...settings, preferences: newPreferences };
+    setSettings(optimisticSettings);
+    setIsSaving(true);
+
+    try {
+      await api.put('/settings', { preferences: newPreferences });
+      toast({
+        title: "Success",
+        description: "Your preferences have been saved.",
       });
+    } catch (error) {
+      console.error("Failed to save settings:", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Could not save your preferences. Please try again.",
+      });
+      fetchSettings(); // Revert to server state on error
+    } finally {
+      setIsSaving(false);
     }
+  };
+
+  const handleDisconnect = () => {
+    // Placeholder for disconnect logic
+    toast({ title: "Info", description: "Disconnect functionality is not yet implemented." });
   };
 
   return (
@@ -58,8 +82,8 @@ export default function SettingsPage() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-slate-900">Settings</h1>
           <p className="text-slate-600 mt-1">Manage your SMS sync preferences and security</p>
-          {currentUser && (
-            <p className="text-sm text-slate-500 mt-1">Phone: {currentUser.phone_number}</p>
+          {settings && (
+            <p className="text-sm text-slate-500 mt-1">Phone: {settings.phoneNumber}</p>
           )}
         </div>
         
@@ -77,62 +101,15 @@ export default function SettingsPage() {
               <Card className="bg-white/80 backdrop-blur-sm border-0 shadow-lg">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <SettingsIcon className="w-5 h-5" />
-                    Account & Device
+                    <User className="w-5 h-5" />
+                    Account Information
                   </CardTitle>
+                  <CardDescription>This is your account information based on your login.</CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-6">
-                  {activeSession ? (
-                    <>
-                      <div className="grid md:grid-cols-2 gap-6">
-                        <div className="space-y-2">
-                          <Label htmlFor="phone">Phone Number</Label>
-                          <Input
-                            id="phone"
-                            value={currentUser?.phone_number || ''}
-                            disabled
-                            className="bg-slate-100"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="device">Active Device</Label>
-                          <Input
-                            id="device"
-                            value={activeSession.device_name}
-                            disabled
-                            className="bg-slate-100"
-                          />
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-center justify-between p-4 bg-green-50 rounded-lg">
-                        <div className="flex items-center gap-3">
-                          <Shield className="w-5 h-5 text-green-600" />
-                          <div>
-                            <p className="font-semibold text-slate-900">OTP Verification</p>
-                            <p className="text-sm text-slate-500">Phone number verified</p>
-                          </div>
-                        </div>
-                        <Badge className="bg-green-100 text-green-800 border-green-200">
-                          Verified
-                        </Badge>
-                      </div>
-
-                      <Button variant="outline" onClick={handleDisconnect} className="w-full">
-                        <LogOut className="w-4 h-4 mr-2" /> 
-                        Disconnect {activeSession.device_name}
-                      </Button>
-                    </>
-                  ) : (
-                    <div className="text-center py-8">
-                      <Smartphone className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-                      <p className="text-slate-500 font-medium">No active device connected</p>
-                      <p className="text-sm text-slate-400 mt-1">Please connect a device to manage settings.</p>
-                      {currentUser && (
-                        <p className="text-xs text-slate-400 mt-2">Account: {currentUser.phone_number}</p>
-                      )}
-                    </div>
-                  )}
+                <CardContent className="grid sm:grid-cols-2 gap-4">
+                    <div><Label>Phone Number</Label><p className="font-mono">{settings?.phoneNumber}</p></div>
+                    <div><Label>User ID</Label><p className="font-mono text-xs break-all">{settings?.userId}</p></div>
+                    <div><Label>Member Since</Label><p>{settings?.createdAt ? format(new Date(settings.createdAt), 'PPP') : 'N/A'}</p></div>
                 </CardContent>
               </Card>
             </motion.div>
@@ -146,44 +123,52 @@ export default function SettingsPage() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Smartphone className="w-5 h-5" />
-                    Sync Preferences
+                    Connected Device
                   </CardTitle>
+                   <CardDescription>This is the currently active device for sending and receiving sync commands.</CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-semibold text-slate-900">Auto Sync</p>
-                      <p className="text-sm text-slate-500">Automatically sync new messages in real-time</p>
+                <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between p-4 bg-green-50 rounded-lg">
+                        <div>
+                            <p className="font-semibold text-slate-900">{settings?.displayName || 'Android Device'}</p>
+                            <p className="text-xs text-slate-500">Last updated: {settings?.lastUpdated ? format(new Date(settings.lastUpdated), 'Pp') : 'N/A'}</p>
+                        </div>
+                        <Button variant="outline" size="sm" onClick={handleDisconnect}>
+                            <LogOut className="w-4 h-4 mr-2" /> 
+                            Disconnect
+                        </Button>
                     </div>
-                    <Switch
-                      checked={preferences.autoSync}
-                      onCheckedChange={(value) => handlePreferenceChange('autoSync', value)}
-                      disabled={!activeSession}
-                    />
+                </CardContent>
+              </Card>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+            >
+              <Card className="bg-white/80 backdrop-blur-sm border-0 shadow-lg">
+                <CardHeader className="flex flex-row items-center justify-between">
+                    <div>
+                        <CardTitle className="flex items-center gap-2"><SettingsIcon className="w-5 h-5" /> Sync Preferences</CardTitle>
+                        <CardDescription>Choose which data types to sync automatically from your device.</CardDescription>
+                    </div>
+                    {isSaving && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+                </CardHeader>
+                <CardContent className="space-y-6 pt-6">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="sync-messages">Sync Messages</Label>
+                    <Switch id="sync-messages" checked={settings?.preferences.syncMessages} onCheckedChange={(val) => handlePreferenceChange('syncMessages', val)} />
                   </div>
 
                   <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-semibold text-slate-900">Push Notifications</p>
-                      <p className="text-sm text-slate-500">Get notified of new messages</p>
-                    </div>
-                    <Switch
-                      checked={preferences.notifications}
-                      onCheckedChange={(value) => handlePreferenceChange('notifications', value)}
-                      disabled={!activeSession}
-                    />
+                    <Label htmlFor="sync-contacts">Sync Contacts</Label>
+                    <Switch id="sync-contacts" checked={settings?.preferences.syncContacts} onCheckedChange={(val) => handlePreferenceChange('syncContacts', val)} />
                   </div>
 
                   <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-semibold text-slate-900">End-to-End Encryption</p>
-                      <p className="text-sm text-slate-500">Encrypt all message data</p>
-                    </div>
-                    <Switch
-                      checked={preferences.encryption}
-                      onCheckedChange={(value) => handlePreferenceChange('encryption', value)}
-                      disabled
-                    />
+                    <Label htmlFor="sync-photos">Sync Photos</Label>
+                    <Switch id="sync-photos" checked={settings?.preferences.syncPhotos} onCheckedChange={(val) => handlePreferenceChange('syncPhotos', val)} />
                   </div>
                 </CardContent>
               </Card>
@@ -194,37 +179,21 @@ export default function SettingsPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
             >
-              <Card className="bg-white/80 backdrop-blur-sm border-0 shadow-lg">
+              <Card className="bg-white/80 backdrop-blur-sm border-0 shadow-lg border-red-500/50">
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Download className="w-5 h-5" />
-                    Data Management
+                  <CardTitle className="flex items-center gap-2 text-red-700">
+                    <Trash2 className="w-5 h-5" />
+                    Danger Zone
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <Button variant="outline" className="justify-start gap-2">
-                      <Download className="w-4 h-4" />
-                      Export All Data
-                    </Button>
-                    <Button variant="outline" className="justify-start gap-2">
-                      <Lock className="w-4 h-4" />
-                      Backup Data
-                    </Button>
-                  </div>
-
-                  <div className="p-4 bg-red-50 rounded-lg border border-red-200">
-                    <div className="flex items-center gap-3 mb-3">
-                      <Trash2 className="w-5 h-5 text-red-600" />
-                      <p className="font-semibold text-red-900">Danger Zone</p>
+                <CardContent>
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <p className="font-semibold">Delete All Synced Data</p>
+                            <p className="text-sm text-muted-foreground">Permanently remove all your data from FigCloud. This cannot be undone.</p>
+                        </div>
+                        <Button variant="destructive">Delete Data</Button>
                     </div>
-                    <p className="text-sm text-red-700 mb-4">
-                      These actions cannot be undone. Please be careful.
-                    </p>
-                      <Button variant="destructive" size="sm" className="w-full md:w-auto">
-                        Delete All Synced Data
-                      </Button>
-                  </div>
                 </CardContent>
               </Card>
             </motion.div>

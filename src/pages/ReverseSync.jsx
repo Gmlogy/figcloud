@@ -10,13 +10,15 @@ import {
   MessageSquare, 
   Users, 
   Camera, 
-  CheckCircle,
   Clock,
   AlertTriangle,
-  ArrowDown
+  ArrowDown,
+  Loader2
 } from "lucide-react";
 import { format } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
+import { api } from '@/lib/api';
+import { getCurrentUser } from 'aws-amplify/auth';
 
 export default function ReverseSyncPage() {
   const [reverseSyncRequests, setReverseSyncRequests] = useState([]);
@@ -33,18 +35,31 @@ export default function ReverseSyncPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [syncProgress, setSyncProgress] = useState(0);
   const [currentUser, setCurrentUser] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-   // loadData();
+    const loadData = async () => {
+      setIsLoading(true);
+      try {
+        const { signInDetails } = await getCurrentUser();
+        setCurrentUser({ phone_number: signInDetails.loginId });
+
+        const dataCounts = await api.get('/data-counts');
+        setAvailableData(dataCounts);
+
+      } catch (error) {
+        console.error("Failed to load device recovery data:", error);
+        setAvailableData({ messages: 0, contacts: 0, photos: 0 });
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadData();
   }, []);
 
- 
-
   const handleOptionChange = (option, value) => {
-    setSelectedOptions(prev => ({
-      ...prev,
-      [option]: value
-    }));
+    setSelectedOptions(prev => ({ ...prev, [option]: value }));
   };
 
   const handleSelectAll = () => {
@@ -57,15 +72,17 @@ export default function ReverseSyncPage() {
     });
   };
 
-
   const handleCancelSync = async (requestId) => {
-    await ReverseSync.update(requestId, { status: 'cancelled' });
-    await loadData();
+    console.log("Cancelling sync for request:", requestId);
+  };
+  
+  const handleStartSync = async (requestId) => {
+    console.log("Starting sync for request:", requestId);
   };
 
   const getSyncDescription = () => {
     const selected = Object.entries(selectedOptions)
-      .filter(([key, value]) => value)
+      .filter(([, value]) => value)
       .map(([key]) => key.replace('include_', ''));
     
     if (selected.length === 0) return "No data selected";
@@ -78,6 +95,20 @@ export default function ReverseSyncPage() {
     (selectedOptions.include_contacts ? availableData.contacts : 0) +
     (selectedOptions.include_photos ? availableData.photos : 0);
 
+  const StatCard = ({ icon, label, count, colorClass, isLoading }) => (
+    <div className={`flex items-center gap-4 p-4 rounded-lg ${colorClass}`}>
+      {icon}
+      <div>
+        {isLoading ? (
+          <Loader2 className="w-6 h-6 animate-spin text-slate-500" />
+        ) : (
+          <p className="font-semibold text-slate-900 text-2xl">{count.toLocaleString()}</p>
+        )}
+        <p className="text-sm text-slate-600">{label}</p>
+      </div>
+    </div>
+  );
+
   return (
     <div className="p-8 bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
       <div className="max-w-4xl mx-auto">
@@ -89,7 +120,6 @@ export default function ReverseSyncPage() {
           )}
         </div>
 
-        {/* Available Data Overview */}
         <Card className="bg-white/80 backdrop-blur-sm border-0 shadow-lg mb-8">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -99,32 +129,31 @@ export default function ReverseSyncPage() {
           </CardHeader>
           <CardContent>
             <div className="grid md:grid-cols-3 gap-6">
-              <div className="flex items-center gap-4 p-4 bg-blue-50 rounded-lg">
-                <MessageSquare className="w-8 h-8 text-blue-600" />
-                <div>
-                  <p className="font-semibold text-slate-900">{availableData.messages.toLocaleString()}</p>
-                  <p className="text-sm text-slate-600">Messages</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-4 p-4 bg-green-50 rounded-lg">
-                <Users className="w-8 h-8 text-green-600" />
-                <div>
-                  <p className="font-semibold text-slate-900">{availableData.contacts.toLocaleString()}</p>
-                  <p className="text-sm text-slate-600">Contacts</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-4 p-4 bg-purple-50 rounded-lg">
-                <Camera className="w-8 h-8 text-purple-600" />
-                <div>
-                  <p className="font-semibold text-slate-900">{availableData.photos.toLocaleString()}</p>
-                  <p className="text-sm text-slate-600">Photos</p>
-                </div>
-              </div>
+              <StatCard 
+                icon={<MessageSquare className="w-8 h-8 text-blue-600" />}
+                label="Messages"
+                count={availableData.messages}
+                colorClass="bg-blue-50"
+                isLoading={isLoading}
+              />
+              <StatCard 
+                icon={<Users className="w-8 h-8 text-green-600" />}
+                label="Contacts"
+                count={availableData.contacts}
+                colorClass="bg-green-50"
+                isLoading={isLoading}
+              />
+              <StatCard 
+                icon={<Camera className="w-8 h-8 text-purple-600" />}
+                label="Photos"
+                count={availableData.photos}
+                colorClass="bg-purple-50"
+                isLoading={isLoading}
+              />
             </div>
           </CardContent>
         </Card>
 
-        {/* Pending Sync Requests */}
         <AnimatePresence>
           {reverseSyncRequests.map((request) => (
             <motion.div

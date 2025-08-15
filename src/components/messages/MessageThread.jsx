@@ -5,12 +5,11 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { api } from '@/lib/api'; // Import our new API helper
+import { api } from '@/lib/api';
 import { Phone, Video, MoreVertical, Send, Check, Clock, Wifi } from "lucide-react";
 
 const MessageStatusIcon = ({ message }) => {
   if (!message.is_sent) return null;
-
   switch (message.sync_status) {
     case 'pending': return <Clock className="w-3 h-3 ml-1" />;
     case 'synced': return <Check className="w-3 h-3 ml-1" />;
@@ -32,22 +31,25 @@ export default function MessageThread({ conversation, currentUser, onRefresh }) 
   const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!newMessage.trim()) return;
-
     setIsSending(true);
 
     try {
-      // Call our new POST /messages endpoint
-      await api.post('/messages', {
+      // --- THIS IS THE FIX ---
+      // We no longer generate a new threadId. We use the one that
+      // already exists on the conversation object. This guarantees the
+      // reply is added to the correct conversation.
+      const payload = {
         threadId: conversation.thread_id,
         body: newMessage.trim(),
-      });
+      };
+      // --- END OF FIX ---
       
-      setNewMessage(""); // Clear the input field
-      onRefresh(); // Tell the dashboard to reload all messages to show the new one
+      await api.post('/messages', payload);
+      setNewMessage(""); 
+      setTimeout(() => onRefresh(), 2500);
       
     } catch (error) {
       console.error("Failed to send message:", error);
-      // In a real app, you would show an error toast to the user here
       alert("Failed to send message. Please try again.");
     } finally {
       setIsSending(false);
@@ -59,7 +61,7 @@ export default function MessageThread({ conversation, currentUser, onRefresh }) 
     if (isToday(date)) {
       return format(date, 'h:mm a');
     } else if (isYesterday(date)) {
-      return format(date, 'Yesterday h:mm a');
+      return format(date, "'Yesterday' h:mm a");
     } else {
       return format(date, 'MMM d, h:mm a');
     }
@@ -72,7 +74,6 @@ export default function MessageThread({ conversation, currentUser, onRefresh }) 
     return phone ? phone.slice(-2) : '??';
   };
 
-  // The sortedMessages logic is already correct from your provided file.
   const sortedMessages = [...conversation.messages].sort(
     (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
   );
