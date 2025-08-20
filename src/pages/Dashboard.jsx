@@ -5,6 +5,7 @@ import { Search, Plus } from "lucide-react";
 import { motion } from "framer-motion";
 import { getCurrentUser } from 'aws-amplify/auth';
 import { api } from '@/lib/api';
+import { normalizePhoneNumber } from '@/utils/phoneUtils'; // Adjust path if needed
 
 import ConversationList from "../components/messages/ConversationList";
 import MessageThread from "../components/messages/MessageThread";
@@ -56,19 +57,39 @@ export default function DashboardPage() {
     }
   };
 
-  const conversations = Array.isArray(messages) ? messages.reduce((acc, message) => {
-    const threadId = message.threadId;
+    const conversations = Array.isArray(messages) ? messages.reduce((acc, message) => {
+    // --- START OF NORMALIZATION FIX ---
+    // 1. Normalize the phone numbers for the current user and the message address.
+    const normalizedCurrentUserPhone = normalizePhoneNumber(currentUser?.phone_number);
+    const normalizedAddress = normalizePhoneNumber(message.address);
+
+    if (!normalizedCurrentUserPhone || !normalizedAddress) {
+        return acc; // Skip messages with invalid numbers
+    }
+
+    // 2. Create the consistent threadId using the NORMALIZED numbers.
+    const participants = [normalizedCurrentUserPhone, normalizedAddress].sort();
+    const consistentThreadId = participants.join('_');
+    // --- END OF NORMALIZATION FIX ---
+    
+    const threadId = consistentThreadId;
+
     if (!acc[threadId]) {
+      // 3. Look up the contact using the NORMALIZED number.
+      const contact = contacts.find(c => normalizePhoneNumber(c.phone_number) === normalizedAddress);
+
       acc[threadId] = {
         thread_id: threadId,
-        contact_name: message.contactName || message.address, 
-        phone_number: message.address,
+        contact_name: contact?.full_name || message.address, // Show contact name if found
+        phone_number: normalizedAddress, // Store the normalized number
         messages: [],
         last_message: null,
         unread_count: 0,
         is_group: message.is_group || false,
       };
     }
+    
+    // The rest of your logic remains the same...
     acc[threadId].messages.push({
         id: message.timestamp,
         message_content: message.body,
