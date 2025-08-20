@@ -4,6 +4,7 @@ import { format } from "date-fns";
 import { Download, Calendar, Smartphone, X, ZoomIn, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { api } from '@/lib/api';
 
 export default function PhotoGrid({ photos, isLoading, isSelectionMode, selectedPhotos, onPhotoClick }) {
   const [modalPhoto, setModalPhoto] = useState(null);
@@ -34,11 +35,17 @@ export default function PhotoGrid({ photos, isLoading, isSelectionMode, selected
       }
   };
 
-  const handleModalDownload = async (photo) => {
+    const handleModalDownload = async (photo) => {
     try {
-      const response = await fetch(photo.file_url);
-      if (!response.ok) throw new Error('Network response was not ok.');
-      const blob = await response.blob();
+      // 1. Call your new API to get a fresh URL
+      const response = await api.get(`/photos/${photo.photoId}/download`);
+      const { downloadUrl } = response; // Assuming your api library parses the JSON
+
+      // 2. Fetch the blob from the FRESH url
+      const blobResponse = await fetch(downloadUrl);
+      if (!blobResponse.ok) throw new Error('Blob fetch failed.');
+      
+      const blob = await blobResponse.blob();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -49,7 +56,7 @@ export default function PhotoGrid({ photos, isLoading, isSelectionMode, selected
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error("Download failed:", error);
-      alert("Download failed. Please try again."); // Simple error feedback
+      alert("Download failed. Please try again.");
     }
   };
 
