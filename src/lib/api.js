@@ -22,10 +22,13 @@ async function request(method, path, body) {
       throw new Error('User is not authenticated. No ID token found.');
     }
 
-    const headers = {
-      'Content-Type': 'application/json',
-      'Authorization': idToken.toString()
+    const token = idToken.toString();
+const headers = {
+  'Content-Type': 'application/json',
+  'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`,
+  'x-id-token': token  // legacy fallback for any old code reading a raw token
     };
+
     
     const url = `${API_BASE_URL}${path}`;
 

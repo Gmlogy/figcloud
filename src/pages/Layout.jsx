@@ -1,5 +1,3 @@
-
-
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { createPageUrl } from "@/utils";
@@ -27,14 +25,14 @@ const navigationItems = [
     icon: MessageSquare,
   },
   {
-    title: "Photos", 
+    title: "Photos",
     url: createPageUrl("Photos"),
-    icon: Camera, // Changed from Smartphone to Camera
+    icon: Camera,
   },
   {
-    title: "Contacts", // New item added
+    title: "Contacts",
     url: createPageUrl("Contacts"),
-    icon: Users, // New icon for Contacts
+    icon: Users,
   },
   {
     title: "Device Recovery",
@@ -45,6 +43,12 @@ const navigationItems = [
     title: "Sync Status",
     url: createPageUrl("SyncStatus"),
     icon: Wifi,
+  },
+  // ✅ New nav item
+  {
+    title: "Find My Phone",
+    url: createPageUrl("FindPhone"),
+    icon: Smartphone,
   },
   {
     title: "Settings",
@@ -233,7 +237,6 @@ export default function Layout({ children, currentPageName, signOut }) {
               </Button>
             </div>
           </SidebarFooter>
-          {/* --- END OF UPDATED SECTION --- */}
         </Sidebar>
 
         <main className="flex-1 flex flex-col" style={{ background: 'rgb(var(--md-sys-color-background))' }}>
@@ -259,4 +262,3 @@ export default function Layout({ children, currentPageName, signOut }) {
     </SidebarProvider>
   );
 }
-

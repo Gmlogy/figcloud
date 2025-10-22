@@ -44,12 +44,25 @@ export default function ReverseSyncPage() {
         const { signInDetails } = await getCurrentUser();
         setCurrentUser({ phone_number: signInDetails.loginId });
 
-        const dataCounts = await api.get('/data-counts');
-        setAvailableData(dataCounts);
+        // Fetch both data counts and pending devices in parallel
+        const [dataCounts, pendingDevices] = await Promise.all([
+          api.get('/data-counts'),
+          api.get('/fmp/pending-devices')
+        ]);
+        
+        setAvailableData({
+          messages: dataCounts.messages?.items || 0,
+          contacts: dataCounts.contacts?.items || 0,
+          photos: dataCounts.photos?.items || 0,
+        });
+
+        // FIX: Ensure that the response is an array before setting the state
+        setReverseSyncRequests(Array.isArray(pendingDevices) ? pendingDevices : []);
 
       } catch (error) {
         console.error("Failed to load device recovery data:", error);
         setAvailableData({ messages: 0, contacts: 0, photos: 0 });
+        setReverseSyncRequests([]);
       } finally {
         setIsLoading(false);
       }
@@ -74,10 +87,39 @@ export default function ReverseSyncPage() {
 
   const handleCancelSync = async (requestId) => {
     console.log("Cancelling sync for request:", requestId);
+    // TODO: Implement API call to cancel sync
   };
   
   const handleStartSync = async (requestId) => {
-    console.log("Starting sync for request:", requestId);
+    console.log("Starting sync for request:", requestId, "with options:", selectedOptions);
+    setIsProcessing(true);
+    setSyncProgress(0); // Reset progress
+
+    try {
+        await api.post('/fmp/request-recovery', {
+            deviceId: requestId,
+            messages: selectedOptions.include_messages,
+            contacts: selectedOptions.include_contacts,
+            photos: selectedOptions.include_photos,
+        });
+
+        // Simulate progress for user feedback
+        let progress = 0;
+        const interval = setInterval(() => {
+            progress += 10;
+            setSyncProgress(progress);
+            if (progress >= 100) {
+                clearInterval(interval);
+                setIsProcessing(false);
+                // Remove the request from the list as it has been processed
+                setReverseSyncRequests(prev => prev.filter(req => req.deviceId !== requestId));
+            }
+        }, 300);
+
+    } catch (error) {
+        console.error("Failed to start sync request:", error);
+        setIsProcessing(false);
+    }
   };
 
   const getSyncDescription = () => {
@@ -157,7 +199,7 @@ export default function ReverseSyncPage() {
         <AnimatePresence>
           {reverseSyncRequests.map((request) => (
             <motion.div
-              key={request.id}
+              key={request.deviceId}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
@@ -179,9 +221,9 @@ export default function ReverseSyncPage() {
                   <div className="flex items-center gap-3 p-4 bg-slate-50 rounded-lg">
                     <Smartphone className="w-10 h-10 text-slate-600" />
                     <div>
-                      <p className="font-semibold text-slate-900">{request.device_name}</p>
+                      <p className="font-semibold text-slate-900">{request.platform || 'New Device'}</p>
                       <p className="text-sm text-slate-500">
-                        Requested: {format(new Date(request.requested_date), 'MMM d, yyyy h:mm a')}
+                        Detected: {format(new Date(request.updatedAt), 'MMM d, yyyy h:mm a')}
                       </p>
                     </div>
                   </div>
@@ -263,7 +305,7 @@ export default function ReverseSyncPage() {
 
                     <div className="flex gap-3 pt-4">
                       <Button 
-                        onClick={() => handleStartSync(request.id)}
+                        onClick={() => handleStartSync(request.deviceId)}
                         disabled={totalSelectedItems === 0 || isProcessing}
                         className="flex-1 bg-blue-600 hover:bg-blue-700"
                       >
@@ -272,7 +314,7 @@ export default function ReverseSyncPage() {
                       </Button>
                       <Button 
                         variant="outline" 
-                        onClick={() => handleCancelSync(request.id)}
+                        onClick={() => handleCancelSync(request.deviceId)}
                         disabled={isProcessing}
                       >
                         Cancel
@@ -285,7 +327,11 @@ export default function ReverseSyncPage() {
           ))}
         </AnimatePresence>
 
-        {reverseSyncRequests.length === 0 && (
+        {isLoading ? (
+            <div className="flex justify-center items-center h-48">
+                <Loader2 className="w-8 h-8 animate-spin text-slate-500" />
+            </div>
+        ) : reverseSyncRequests.length === 0 && (
           <Card className="bg-white/80 backdrop-blur-sm border-0 shadow-lg">
             <CardContent className="text-center py-12">
               <Smartphone className="w-16 h-16 text-slate-300 mx-auto mb-4" />
@@ -300,3 +346,4 @@ export default function ReverseSyncPage() {
     </div>
   );
 }
+

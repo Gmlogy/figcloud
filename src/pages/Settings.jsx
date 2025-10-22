@@ -130,7 +130,7 @@ export default function SettingsPage() {
                 <CardContent className="space-y-4">
                     <div className="flex items-center justify-between p-4 bg-green-50 rounded-lg">
                         <div>
-                            <p className="font-semibold text-slate-900">{settings?.displayName || 'Android Device'}</p>
+                            <p className="font-semibold text-slate-900">{settings?.displayName || 'Fig Phone Device'}</p>
                             <p className="text-xs text-slate-500">Last updated: {settings?.lastUpdated ? format(new Date(settings.lastUpdated), 'Pp') : 'N/A'}</p>
                         </div>
                         <Button variant="outline" size="sm" onClick={handleDisconnect}>
