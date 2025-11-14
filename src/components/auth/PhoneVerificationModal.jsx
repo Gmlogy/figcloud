@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
-// IMPORTANT: configure Amplify ONCE (e.g., in main.jsx). Do NOT import another config here.
 import {
   signIn,
   confirmSignIn,
@@ -26,9 +25,8 @@ import {
   signUp,
 } from "aws-amplify/auth";
 
-// --- API for QR flow ---
 const API_BASE_URL = "https://jt1d4gvhah.execute-api.us-east-1.amazonaws.com";
-const API_KEY = import.meta.env.VITE_QR_API_KEY; // optional if you later protect routes with an API key
+const API_KEY = import.meta.env.VITE_QR_API_KEY;
 
 async function authHeaders() {
   const headers = { "Content-Type": "application/json" };
@@ -61,7 +59,9 @@ const api = {
 
   pollQrStatus: async (requestId) => {
     const res = await fetch(
-      `${API_BASE_URL}/qr-signin/poll?requestId=${encodeURIComponent(requestId)}`,
+      `${API_BASE_URL}/qr-signin/poll?requestId=${encodeURIComponent(
+        requestId
+      )}`,
       { cache: "no-store" }
     );
     if (!res.ok) {
@@ -76,7 +76,6 @@ const api = {
 
 // ===== Helpers (silent sign-up like Android) =====
 function strongRandomPassword() {
-  // 24+ chars, mixed classes to satisfy typical pool policies
   const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   const lower = "abcdefghijklmnopqrstuvwxyz";
   const nums = "0123456789";
@@ -90,20 +89,17 @@ function strongRandomPassword() {
 
 async function silentSignupIfNeeded(usernameOrPhoneE164) {
   try {
-    // Use phone as username & attribute. Your PreSignUp trigger auto-confirms.
     await signUp({
       username: usernameOrPhoneE164,
       password: strongRandomPassword(),
       options: { userAttributes: { phone_number: usernameOrPhoneE164 } },
     });
-    // If created, great; if it already exists, the catch below will ignore.
   } catch (e) {
     const msg = (e?.name || e?.message || "").toString();
-    if (!/usernameexists/i.test(msg)) throw e; // rethrow unexpected errors
+    if (!/usernameexists/i.test(msg)) throw e;
   }
 }
 
-// Dev helper to simulate “phone scanned & approved”
 const MobileScannerSimulator = ({ requestId }) => {
   const [scanned, setScanned] = useState(false);
   useEffect(() => {
@@ -113,7 +109,10 @@ const MobileScannerSimulator = ({ requestId }) => {
   if (!requestId) return null;
 
   return (
-    <div hidden className="fixed bottom-4 right-4 bg-gray-800 text-white p-4 rounded-lg shadow-xl text-sm w-64 z-50">
+    <div
+      hidden
+      className="fixed bottom-4 right-4 bg-gray-800 text-white p-4 rounded-lg shadow-xl text-sm w-64 z-50"
+    >
       <h4 className="font-bold mb-2">Android App Simulator</h4>
       {scanned ? (
         <div className="text-green-400 font-semibold text-center py-2 flex items-center justify-center flex-col">
@@ -159,7 +158,10 @@ export default function PhoneVerificationModal({ onVerificationComplete }) {
   );
   const pollRef = useRef(null);
 
-  // If already signed, close immediately
+  // ✅ NEW: checkbox state
+  const [otpConsent, setOtpConsent] = useState(false);
+  const [tosAccepted, setTosAccepted] = useState(false);
+
   useEffect(() => {
     (async () => {
       try {
@@ -169,7 +171,6 @@ export default function PhoneVerificationModal({ onVerificationComplete }) {
     })();
   }, [onVerificationComplete]);
 
-  // ---------- Helpers ----------
   const formatPhoneInput = (value) => {
     if (!value) return "";
     const v = value.replace(/[^\d+]/g, "");
@@ -181,11 +182,10 @@ export default function PhoneVerificationModal({ onVerificationComplete }) {
     const v = (input || "").trim();
     if (v.startsWith("+")) return v.replace(/\s+/g, "");
     const digits = v.replace(/\D/g, "");
-    return digits.length >= 6 ? `+1${digits}` : v; // adjust default for your audience
+    return digits.length >= 6 ? `+1${digits}` : v;
   };
 
   const startSigninThenSelectSms = async (e164) => {
-    // Your existing SMS path
     const out = await signIn({
       username: e164,
       options: { authFlowType: "USER_AUTH" },
@@ -206,7 +206,6 @@ export default function PhoneVerificationModal({ onVerificationComplete }) {
     throw new Error(`Unsupported next step: ${stepName || challenge}`);
   };
 
-  // ---------- SMS handlers ----------
   const handlePhoneSubmit = async (e) => {
     e.preventDefault();
     setIsLoading(true);
@@ -280,118 +279,113 @@ export default function PhoneVerificationModal({ onVerificationComplete }) {
     }
   };
 
-  // ---------- QR flow ----------
   useEffect(() => {
-  let stop = () => {};
-  const begin = async () => {
-    setIsLoading(true);
-    setError("");
-    setInfo("");
-    setQrData(null);
-    setQrStatusMessage("Generating secure QR code...");
+    let stop = () => {};
+    const begin = async () => {
+      setIsLoading(true);
+      setError("");
+      setInfo("");
+      setQrData(null);
+      setQrStatusMessage("Generating secure QR code...");
 
-    try {
-      const data = await api.startQrSignIn();
-      setQrData(data);
-      setQrStatusMessage("Scan this code with your logged-in mobile app.");
-      const expiry = Date.now() + (data.ttl || 120) * 1000;
+      try {
+        const data = await api.startQrSignIn();
+        setQrData(data);
+        setQrStatusMessage("Scan this code with your logged-in mobile app.");
+        const expiry = Date.now() + (data.ttl || 120) * 1000;
 
-      const timer = setInterval(async () => {
-        try {
-          if (Date.now() > expiry) {
-            clearInterval(timer);
-            setQrData(null);
-            setQrStatusMessage("QR code expired. Please generate a new one.");
-            setError("QR expired.");
-            return;
-          }
-
-          const res = await api.pollQrStatus(data.requestId);
-          console.debug("[QR] poll:", res);
-
-          if (res?.status === "CONFIRMED") {
-            const userForSignin = res.phoneNumber || res.username;
-            if (!userForSignin) {
+        const timer = setInterval(async () => {
+          try {
+            if (Date.now() > expiry) {
               clearInterval(timer);
-              setError("Poll returned CONFIRMED but missing username/phone.");
+              setQrData(null);
+              setQrStatusMessage("QR code expired. Please generate a new one.");
+              setError("QR expired.");
               return;
             }
-            console.debug("[QR] proceeding with username:", userForSignin);
+
+            const res = await api.pollQrStatus(data.requestId);
+            console.debug("[QR] poll:", res);
+
+            if (res?.status === "CONFIRMED") {
+              const userForSignin = res.phoneNumber || res.username;
+              if (!userForSignin) {
+                clearInterval(timer);
+                setError("Poll returned CONFIRMED but missing username/phone.");
+                return;
+              }
+              console.debug("[QR] proceeding with username:", userForSignin);
+              clearInterval(timer);
+              await completeQrSignIn(userForSignin, data.requestId);
+            }
+          } catch (e) {
             clearInterval(timer);
-            await completeQrSignIn(userForSignin, data.requestId);
+            setError(e?.message || "Polling error.");
           }
-        } catch (e) {
-          clearInterval(timer);
-          setError(e?.message || "Polling error.");
-        }
-      }, 2500);
+        }, 2500);
 
-      stop = () => clearInterval(timer);
-    } catch (err) {
-      setError(err?.message || "Could not start QR sign-in.");
-      setQrStatusMessage("Error generating QR code. Refresh or try SMS.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
+        stop = () => clearInterval(timer);
+      } catch (err) {
+        setError(err?.message || "Could not start QR sign-in.");
+        setQrStatusMessage("Error generating QR code. Refresh or try SMS.");
+      } finally {
+        setIsLoading(false);
+      }
+    };
 
-  if (signInMethod === "qr") begin();
-  else stop();
-  return stop;
-}, [signInMethod]);
+    if (signInMethod === "qr") begin();
+    else stop();
+    return stop;
+  }, [signInMethod]);
 
-
-  // After phone approves, finish on web with CUSTOM_AUTH (passwordless) + silent sign-up fallback
   const normalizeUsername = (u) => {
-  if (!u) return u;
-  const s = String(u).trim();
-  return /^\+?\d+$/.test(s) ? (s.startsWith("+") ? s : `+${s}`) : s;
-};
-
-const completeQrSignIn = async (rawUsername, requestId) => {
-  // normalize: if it's digits, ensure leading +
-  const normalize = (u) => {
     if (!u) return u;
     const s = String(u).trim();
     return /^\+?\d+$/.test(s) ? (s.startsWith("+") ? s : `+${s}`) : s;
   };
 
-  const username = normalize(rawUsername);
+  const completeQrSignIn = async (rawUsername, requestId) => {
+    const normalize = (u) => {
+      if (!u) return u;
+      const s = String(u).trim();
+      return /^\+?\d+$/.test(s) ? (s.startsWith("+") ? s : `+${s}`) : s;
+    };
 
-  try {
-    console.log("[QR] Initiate CUSTOM_AUTH for", username);
+    const username = normalize(rawUsername);
 
-    // IMPORTANT: v6 uses CUSTOM_WITHOUT_SRP for passwordless custom auth
-    const out = await signIn({
-      username,
-      options: {
-        authFlowType: "CUSTOM_WITHOUT_SRP",
-        clientMetadata: { mode: "qr" },
-      },
-    });
+    try {
+      console.log("[QR] Initiate CUSTOM_AUTH for", username);
 
-    // Expect the custom challenge; answer with the requestId you stored
-    if (out?.nextStep?.signInStep === "CONFIRM_SIGN_IN_WITH_CUSTOM_CHALLENGE") {
-      await confirmSignIn({ challengeResponse: requestId });
+      const out = await signIn({
+        username,
+        options: {
+          authFlowType: "CUSTOM_WITHOUT_SRP",
+          clientMetadata: { mode: "qr" },
+        },
+      });
+
+      if (
+        out?.nextStep?.signInStep === "CONFIRM_SIGN_IN_WITH_CUSTOM_CHALLENGE"
+      ) {
+        await confirmSignIn({ challengeResponse: requestId });
+      }
+
+      const sess = await fetchAuthSession();
+      if (sess?.tokens) {
+        setInfo("Signed in successfully.");
+        setError("");
+        onVerificationComplete(username);
+      } else {
+        setError("Could not complete QR sign-in after approval.");
+      }
+    } catch (err) {
+      console.error("[QR] InitiateAuth/Confirm failed", err);
+      setError(err?.message || "Failed to complete QR sign-in.");
     }
-
-    const sess = await fetchAuthSession();
-    if (sess?.tokens) {
-      setInfo("Signed in successfully.");
-      setError("");
-      onVerificationComplete(username);
-    } else {
-      setError("Could not complete QR sign-in after approval.");
-    }
-  } catch (err) {
-    console.error("[QR] InitiateAuth/Confirm failed", err);
-    setError(err?.message || "Failed to complete QR sign-in.");
-  }
-};
-
-
+  };
 
   // ---------- UI ----------
+
   const renderSmsFlow = () => (
     <>
       {step === "phone" ? (
@@ -417,6 +411,53 @@ const completeQrSignIn = async (rawUsername, requestId) => {
               />
             </div>
           </div>
+
+          {/* ✅ NEW: Consent + Terms checkboxes */}
+          <div className="space-y-2 text-xs text-slate-600">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={otpConsent}
+                onChange={(e) => setOtpConsent(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300"
+              />
+              <span>
+                I consent to receive One-Time Passwords (OTPs) for verification
+                purposes.
+              </span>
+            </label>
+
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={tosAccepted}
+                onChange={(e) => setTosAccepted(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300"
+              />
+              <span>
+                I accept the{" "}
+                <a
+                  href="https://figkosher.com/62184063161/policies/27542618297.html?locale=en"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline text-slate-800"
+                >
+                  Terms of Service
+                </a>{" "}
+                &amp{" "}
+                <a
+                  href="https://figkosher.com/62184063161/policies/27542585529.html?locale=en"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline text-slate-800"
+                >
+                  Privacy Policy
+                </a>
+                .
+              </span>
+            </label>
+          </div>
+
           {error && (
             <p className="text-sm text-red-600 bg-red-50 p-3 rounded-lg">
               {error}
@@ -431,7 +472,7 @@ const completeQrSignIn = async (rawUsername, requestId) => {
             type="submit"
             className="w-full h-12"
             style={{ backgroundColor: "#20194B" }}
-            disabled={isLoading}
+            disabled={isLoading || !otpConsent || !tosAccepted}
           >
             {isLoading ? (
               "Sending Code..."
@@ -517,7 +558,6 @@ const completeQrSignIn = async (rawUsername, requestId) => {
     <div className="flex flex-col items-center justify-center space-y-4 min-h-[260px]">
       {qrData?.requestId ? (
         <div className="p-4 bg-white rounded-lg border">
-          {/* Encode only requestId; Android maps it to the user and confirms in DynamoDB */}
           <QRCode value={qrData.requestId} size={200} level="H" includeMargin />
         </div>
       ) : (
@@ -542,11 +582,20 @@ const completeQrSignIn = async (rawUsername, requestId) => {
           <Card className="bg-white/100 backdrop-blur-sm shadow-2xl border-0">
             <CardHeader className="text-center pb-4">
               <div
-  style={{ width: 98, height: 98 }}
-  className="mx-auto mb-4 rounded-full overflow-hidden ring-1 ring-black/5 bg-white"
->
-  <img src={BrandLogo} alt="App logo" style={{ width: "100%", height: "100%", objectFit: "contain", padding: 8 }} />
-</div>
+                style={{ width: 98, height: 98 }}
+                className="mx-auto mb-4 rounded-full overflow-hidden ring-1 ring-black/5 bg-white"
+              >
+                <img
+                  src={BrandLogo}
+                  alt="App logo"
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "contain",
+                    padding: 8,
+                  }}
+                />
+              </div>
               <CardTitle className="text-2xl font-bold text-slate-800">
                 Fig Cloud Secure Sign-in
               </CardTitle>
