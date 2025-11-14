@@ -444,7 +444,7 @@ export default function PhoneVerificationModal({ onVerificationComplete }) {
                 >
                   Terms of Service
                 </a>{" "}
-                &amp{" "}
+                and{" "}
                 <a
                   href="https://figkosher.com/62184063161/policies/27542585529.html?locale=en"
                   target="_blank"
