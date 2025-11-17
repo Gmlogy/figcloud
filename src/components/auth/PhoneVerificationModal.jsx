@@ -423,7 +423,7 @@ export default function PhoneVerificationModal({ onVerificationComplete }) {
               />
               <span>
                 I consent to receive One-Time Passwords (OTPs) for verification
-                purposes.
+                purposes, Data rates may apply.
               </span>
             </label>
 
