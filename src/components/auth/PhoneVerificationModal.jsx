@@ -1,4 +1,3 @@
-// src/components/PhoneVerificationModal.jsx
 import React, { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +22,7 @@ import {
   fetchAuthSession,
   getCurrentUser,
   signUp,
+  signOut, // ✅ NEW
 } from "aws-amplify/auth";
 
 const API_BASE_URL = "https://jt1d4gvhah.execute-api.us-east-1.amazonaws.com";
@@ -87,17 +87,110 @@ function strongRandomPassword() {
   return out;
 }
 
+
+// Try CUSTOM_AUTH SMS sign-in first.
+// If the user does not exist, sign them up silently, then start SMS sign-in.
+async function startSmsFlowForPhone(e164) {
+  // 1️⃣ first try sign-in (existing user case)
+  try {
+    return await startCustomSmsSignIn(e164);
+  } catch (err) {
+    const name = (err?.name || err?.__type || "").toString();
+    const msg = (err?.message || "").toString().toLowerCase();
+
+    const isUserNotFound =
+      /UserNotFoundException/i.test(name) ||
+      msg.includes("user does not exist") ||
+      msg.includes("usernotfound");
+
+    if (!isUserNotFound) {
+      // some other error → bubble up
+      throw err;
+    }
+
+    console.log("[web] startSmsFlowForPhone: user not found, doing silent signUp");
+
+    // 2️⃣ user really doesn’t exist → create then sign-in
+    await silentSignupIfNeeded(e164);
+
+    // 3️⃣ now sign-in again (this time should produce CUSTOM_CHALLENGE + SMS)
+    return await startCustomSmsSignIn(e164);
+  }
+}
+
+
+
 async function silentSignupIfNeeded(usernameOrPhoneE164) {
   try {
+    console.log("silentSignupIfNeeded -> signUp", usernameOrPhoneE164);
+
     await signUp({
       username: usernameOrPhoneE164,
       password: strongRandomPassword(),
-      options: { userAttributes: { phone_number: usernameOrPhoneE164 } },
+      options: {
+        userAttributes: {
+          phone_number: usernameOrPhoneE164,
+        },
+      },
     });
+
+    console.log("silentSignupIfNeeded -> user created");
   } catch (e) {
-    const msg = (e?.name || e?.message || "").toString();
-    if (!/usernameexists/i.test(msg)) throw e;
+    const name = (e?.name || e?.__type || "").toString();
+    console.error("silentSignupIfNeeded error:", e);
+
+    // If user already exists, that's fine – we'll just sign in.
+    if (/UsernameExistsException/i.test(name) || /UsernameExists/i.test(name)) {
+      console.log("silentSignupIfNeeded -> user already exists");
+      return;
+    }
+
+    // Anything else is a real sign-up failure – surface it
+    throw e;
   }
+}
+
+// ✅ NEW: ensure we don't have an active session before starting CUSTOM_AUTH
+async function ensureSignedOutIfNeeded() {
+  try {
+    const sess = await fetchAuthSession();
+    if (sess?.tokens) {
+      console.log("[web] ensureSignedOutIfNeeded: signing out existing session");
+      await signOut();
+    }
+  } catch (e) {
+    console.warn("[web] ensureSignedOutIfNeeded: fetchAuthSession failed", e);
+  }
+}
+
+// ✅ NEW: CUSTOM_AUTH SMS sign-in, same backend flow as Android
+async function startCustomSmsSignIn(e164) {
+  console.log("[web] startCustomSmsSignIn for", e164);
+
+  await ensureSignedOutIfNeeded();
+
+  const out = await signIn({
+    username: e164,
+    options: {
+      authFlowType: "CUSTOM_WITHOUT_SRP",
+      clientMetadata: { mode: "sms" }, // create-auth-challenge will treat this as SMS path
+    },
+  });
+
+  const stepName = out?.nextStep?.signInStep || "";
+  console.log("[web] startCustomSmsSignIn nextStep:", stepName);
+
+  if (out.isSignedIn) {
+    // Rare for CUSTOM_AUTH, but handle it
+    return { done: true };
+  }
+
+  if (stepName === "CONFIRM_SIGN_IN_WITH_CUSTOM_CHALLENGE") {
+    // This is what we expect: Twilio SMS was sent by create-auth-challenge Lambda
+    return { done: false };
+  }
+
+  throw new Error(`Unsupported next step for CUSTOM_AUTH SMS: ${stepName}`);
 }
 
 const MobileScannerSimulator = ({ requestId }) => {
@@ -185,63 +278,59 @@ export default function PhoneVerificationModal({ onVerificationComplete }) {
     return digits.length >= 6 ? `+1${digits}` : v;
   };
 
-  const startSigninThenSelectSms = async (e164) => {
-    const out = await signIn({
-      username: e164,
-      options: { authFlowType: "USER_AUTH" },
-    });
-    const sess = await fetchAuthSession();
-    if (sess?.tokens) return { done: true };
-
-    const stepName = out?.nextStep?.signInStep || "";
-    const challenge = out?.nextStep?.challengeName || "";
-
-    if (stepName === "CONTINUE_SIGN_IN_WITH_FIRST_FACTOR_SELECTION") {
-      await confirmSignIn({ challengeResponse: "SMS_OTP" });
-      return { done: false, selectedSms: true };
-    }
-    if (challenge === "SMS_OTP" || String(stepName).includes("SMS")) {
-      return { done: false, selectedSms: true };
-    }
-    throw new Error(`Unsupported next step: ${stepName || challenge}`);
-  };
-
   const handlePhoneSubmit = async (e) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setError("");
-    setInfo("");
-    const e164 = toE164(phoneNumber);
+  e.preventDefault();
+  setIsLoading(true);
+  setError("");
+  setInfo("");
 
-    try {
-      if (!e164.startsWith("+"))
-        throw new Error("Please enter a valid E.164 phone (e.g., +2126...)");
-      const res = await startSigninThenSelectSms(e164);
-      if (res.done) {
-        onVerificationComplete(e164);
-        return;
-      }
-      setStep("otp");
-      setInfo("We sent you a sign-in code by SMS.");
-    } catch (err) {
-      const name = err?.name || err?.__type || "";
-      if (name.includes("UserNotFound"))
-        setError(
-          "No account found for this phone number. Please create your account from the mobile app first."
-        );
-      else if (name.includes("UserNotConfirmed"))
-        setError(
-          "This account isn’t confirmed. Please complete setup from the mobile app."
-        );
-      else if (name.includes("NotAuthorized"))
-        setError(
-          "Sign-in failed. Make sure this phone number matches an existing account."
-        );
-      else setError(err?.message || "Failed to start sign-in.");
-    } finally {
-      setIsLoading(false);
+  const e164 = toE164(phoneNumber);
+
+  try {
+    if (!e164.startsWith("+")) {
+      throw new Error("Please enter a valid E.164 phone (e.g., +2126...)");
     }
-  };
+
+    // ❌ OLD:
+    // await silentSignupIfNeeded(e164);
+    // let res = await startCustomSmsSignIn(e164);
+
+    // ✅ NEW: sign-in first, only sign-up if user is missing
+    const res = await startSmsFlowForPhone(e164);
+
+    if (res.done) {
+      // Very rare for CUSTOM_AUTH, but handle it
+      onVerificationComplete(e164);
+      return;
+    }
+
+    setStep("otp");
+    setInfo("We sent you a sign-in code by SMS.");
+  } catch (err) {
+    console.error("handlePhoneSubmit error:", err);
+
+    const name = (err?.name || err?.__type || "").toString();
+
+    if (/UserNotConfirmed/i.test(name)) {
+      setError(
+        "This account isn’t confirmed. Please complete setup from the mobile app."
+      );
+    } else if (/NotAuthorized/i.test(name)) {
+      setError(
+        "Sign-up / sign-in not allowed for this app client or user pool. Check Cognito app client settings."
+      );
+    } else if (/SignUpNotAllowed/i.test(name)) {
+      setError(
+        "Self sign-up is disabled for this user pool / app client. Enable sign-up in Cognito or create users from the app backend."
+      );
+    } else {
+      setError(err?.message || "Failed to start sign-in.");
+    }
+  } finally {
+    setIsLoading(false);
+  }
+};
+
 
   const handleOtpSubmit = async (e) => {
     e.preventDefault();
@@ -249,6 +338,7 @@ export default function PhoneVerificationModal({ onVerificationComplete }) {
     setError("");
     setInfo("");
     try {
+      // Works for both CUSTOM_AUTH and USER_AUTH; here we’re in CUSTOM_AUTH
       await confirmSignIn({ challengeResponse: otpCode });
       const sess = await fetchAuthSession();
       if (sess?.tokens) onVerificationComplete(toE164(phoneNumber));
@@ -266,7 +356,7 @@ export default function PhoneVerificationModal({ onVerificationComplete }) {
     setInfo("");
     try {
       const e164 = toE164(phoneNumber);
-      const res = await startSigninThenSelectSms(e164);
+      const res = await startCustomSmsSignIn(e164);
       if (res.done) {
         onVerificationComplete(e164);
         return;
@@ -412,7 +502,7 @@ export default function PhoneVerificationModal({ onVerificationComplete }) {
             </div>
           </div>
 
-          {/* ✅ NEW: Consent + Terms checkboxes */}
+          {/* ✅ Consent + Terms checkboxes */}
           <div className="space-y-2 text-xs text-slate-600">
             <label className="flex items-start gap-2 cursor-pointer">
               <input
@@ -423,7 +513,7 @@ export default function PhoneVerificationModal({ onVerificationComplete }) {
               />
               <span>
                 I consent to receive One-Time Passwords (OTPs) for verification
-                purposes, Data rates may apply.
+                purposes.
               </span>
             </label>
 
@@ -444,7 +534,7 @@ export default function PhoneVerificationModal({ onVerificationComplete }) {
                 >
                   Terms of Service
                 </a>{" "}
-                and{" "}
+                &amp{" "}
                 <a
                   href="https://figkosher.com/62184063161/policies/27542585529.html?locale=en"
                   target="_blank"
@@ -496,7 +586,7 @@ export default function PhoneVerificationModal({ onVerificationComplete }) {
             <Input
               id="otp"
               type="text"
-              placeholder="123456 or 12345678"
+              placeholder="123456"
               value={otpCode}
               onChange={(e) =>
                 setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 8))
