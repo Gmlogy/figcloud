@@ -1,5 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { BrowserRouter as Router, Route, Routes, useLocation } from "react-router-dom";
+import {
+  BrowserRouter as Router,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
 import { getCurrentUser, signOut as amplifySignOut } from "aws-amplify/auth";
 // ❌ DO NOT import any file that calls Amplify.configure here
 // import "../aws-amplify-config";
@@ -95,6 +100,21 @@ export default function Pages() {
     try {
       await amplifySignOut();
     } finally {
+      // Clear any QR/auth mode state so the next login starts clean
+      try {
+        localStorage.removeItem("fig_qr_request_id");
+        localStorage.removeItem("fig_qr_session_status");
+        localStorage.removeItem("fig_auth_mode");
+      } catch (e) {
+        console.warn("Failed to clear QR/auth localStorage keys", e);
+      }
+
+      try {
+        sessionStorage.removeItem("qr_scanned");
+      } catch (e) {
+        console.warn("Failed to clear qr_scanned from sessionStorage", e);
+      }
+
       window.location.href = "/";
     }
   };
