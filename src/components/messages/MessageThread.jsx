@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { format, isToday, isYesterday } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -6,22 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
-<<<<<<< HEAD
-import {
-  Phone,
-  Video,
-  MoreVertical,
-  Send,
-  Check,
-  Clock,
-  Wifi,
-} from "lucide-react";
-=======
 import { Phone, Video, MoreVertical, Send, Check, Clock, Wifi } from "lucide-react";
->>>>>>> c72b082 (A concise description of the edit/feature)
 
 const MessageStatusIcon = ({ message }) => {
   if (!message.is_sent) return null;
+
   switch (message.sync_status) {
     case "pending":
       return <Clock className="w-3 h-3 ml-1" />;
@@ -32,69 +21,12 @@ const MessageStatusIcon = ({ message }) => {
   }
 };
 
-function stableMessageKey(m) {
-  // Highest priority: server messageId (unique)
-  if (m?.messageId) return `mid:${m.messageId}`;
-
-  // If you store the raw DynamoDB item on the message, use it:
-  // (Dashboard builds conv.messages with `raw: message`)
-  const raw = m?.raw || {};
-  if (raw?.messageId) return `mid:${raw.messageId}`;
-
-  // If a client-side temp id exists
-  if (m?.id && String(m.id).startsWith("temp-")) return `tmp:${m.id}`;
-
-  // Fallback fingerprint (not perfect, but avoids key collisions most of the time)
-  const ts = m?.timestamp || "";
-  const body = m?.message_content || "";
-  const dir = m?.is_sent ? "S" : "R";
-  return `fb:${dir}|${ts}|${body}`;
-}
-
-function dedupeAndSort(messages) {
-  const map = new Map();
-
-  for (const m of messages) {
-    const key = stableMessageKey(m);
-    const prev = map.get(key);
-
-    // Prefer the "best" copy:
-    // - prefer synced over pending/error
-    // - prefer one that has messageId
-    if (!prev) {
-      map.set(key, m);
-      continue;
-    }
-
-    const prevHasId = !!(prev?.messageId || prev?.raw?.messageId);
-    const curHasId = !!(m?.messageId || m?.raw?.messageId);
-
-    const prevSynced = prev?.sync_status === "synced";
-    const curSynced = m?.sync_status === "synced";
-
-    if (curHasId && !prevHasId) {
-      map.set(key, m);
-    } else if (curSynced && !prevSynced) {
-      map.set(key, m);
-    } else if (curHasId === prevHasId && curSynced === prevSynced) {
-      // If both similar, keep the one with later timestamp (if any)
-      const pt = new Date(prev?.timestamp || 0).getTime();
-      const ct = new Date(m?.timestamp || 0).getTime();
-      if (ct > pt) map.set(key, m);
-    }
-  }
-
-  const out = Array.from(map.values());
-  out.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-  return out;
-}
-
 export default function MessageThread({
   conversation,
   currentUser,
   onRefresh,      // optional fallback
   onMarkRead,     // optional
-  onMessageSent,  // optional hook from Dashboard
+  onMessageSent,  // NEW: parent state update hook
 }) {
   const [newMessage, setNewMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -103,68 +35,54 @@ export default function MessageThread({
 
   if (!conversation || !currentUser) return null;
 
-<<<<<<< HEAD
-  // Build a canonical threadId from the two phone numbers.
-  // This guarantees it matches what SendMessageFunction expects.
-=======
->>>>>>> c72b082 (A concise description of the edit/feature)
   const getCanonicalThreadId = () => {
     const me = currentUser?.phone_number || currentUser?.phoneNumber;
     const other = conversation.phone_number;
 
     if (me && other) {
-<<<<<<< HEAD
-      // stable order so both sides compute the same string
-      const [a, b] = [me, other].sort();
-      return `${a}_${b}`;
-    }
-
-    // fallback to whatever is already stored
-    return conversation.thread_id;
-  };
-
-  useEffect(() => {
-    // keep local messages in sync with server, sorted ascending by time
-    if (conversation?.messages) {
-      const sorted = [...conversation.messages].sort(
-        (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
-      );
-      setLocalMessages(sorted);
-    }
-  }, [conversation.messages]);
-=======
       const [a, b] = [me, other].sort();
       return `${a}_${b}`;
     }
     return conversation.thread_id;
   };
 
-  // Keep local list in sync with conversation.messages, but dedupe aggressively
+  // Merge server messages into local view
   useEffect(() => {
     const server = Array.isArray(conversation?.messages) ? conversation.messages : [];
-    const merged = dedupeAndSort(server);
+    const sortedServer = [...server].sort(
+      (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+    );
+
+    // Keep any local pending/error messages that are not in server list
     setLocalMessages((prev) => {
-      // Preserve pending/error messages that are not yet represented server-side
-      const pendings = prev.filter((m) => m?.sync_status === "pending" || m?.sync_status === "error");
-      const combined = dedupeAndSort([...merged, ...pendings]);
-      return combined;
+      const serverIds = new Set(
+        sortedServer.map((m) => m.messageId || m.id || `${m.timestamp}|${m.message_content}`)
+      );
+
+      const keepLocal = prev.filter((m) => {
+        if (m.sync_status !== "pending" && m.sync_status !== "error") return false;
+        const key = m.messageId || m.id || `${m.timestamp}|${m.message_content}`;
+        return !serverIds.has(key);
+      });
+
+      const merged = [...sortedServer, ...keepLocal].sort(
+        (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+      );
+      return merged;
     });
-  }, [conversation?.messages]);
->>>>>>> c72b082 (A concise description of the edit/feature)
+  }, [conversation.messages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [localMessages.length]);
 
-<<<<<<< HEAD
-=======
   useEffect(() => {
     if (!conversation || !currentUser || !onMarkRead) return;
-    onMarkRead(getCanonicalThreadId());
+    const threadId = getCanonicalThreadId();
+    onMarkRead(threadId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversation.thread_id, currentUser?.phone_number, onMarkRead]);
 
->>>>>>> c72b082 (A concise description of the edit/feature)
   const handleSendMessage = async (e) => {
     e.preventDefault();
     const trimmed = newMessage.trim();
@@ -173,17 +91,11 @@ export default function MessageThread({
     const threadId = getCanonicalThreadId();
     const nowIso = new Date().toISOString();
 
-<<<<<<< HEAD
-    // Optimistic UI message
-    const tempId = `temp-${Date.now()}`;
-    const optimisticMessage = {
-      id: tempId,
-=======
+    // Optimistic message
     const tempId = `temp-${Date.now()}`;
     const optimistic = {
       id: tempId,
       messageId: null,
->>>>>>> c72b082 (A concise description of the edit/feature)
       message_content: trimmed,
       is_sent: true,
       timestamp: nowIso,
@@ -191,79 +103,66 @@ export default function MessageThread({
     };
 
     setIsSending(true);
-<<<<<<< HEAD
-    setLocalMessages((prev) => [...prev, optimisticMessage]);
+    setLocalMessages((prev) => [...prev, optimistic]);
     setNewMessage("");
 
     try {
-      await api.post("/messages", {
-        threadId,
-        body: trimmed,
-      });
-
-      // Optionally flip local optimistic message to "synced"
-      setLocalMessages((prev) =>
-        prev.map((m) =>
-          m.id === tempId ? { ...m, sync_status: "synced" } : m
-        )
-      );
-
-      // Refresh from backend so we see the real saved item
-      setTimeout(() => {
-        onRefresh && onRefresh();
-      }, 1200);
-    } catch (error) {
-      console.error("Failed to send message:", error);
-
-      // Mark the optimistic bubble as failed (optional)
-      setLocalMessages((prev) =>
-        prev.map((m) =>
-          m.id === tempId
-            ? { ...m, sync_status: "error" }
-            : m
-        )
-      );
-
-=======
-    setNewMessage("");
-    setLocalMessages((prev) => dedupeAndSort([...prev, optimistic]));
-
-    try {
+      // IMPORTANT: expect server returns messageItem with messageId, timestamp, threadId...
       const resp = await api.post("/messages", { threadId, body: trimmed });
-      const serverItem = resp?.data ? resp.data : resp;
 
-      // If server returns messageId, use it and update parent immediately
+      const serverItem = resp && typeof resp === "object" ? resp : null;
+
       if (serverItem?.messageId) {
+        // update parent immediately (Dashboard state)
         onMessageSent && onMessageSent(serverItem);
 
-        setLocalMessages((prev) => {
-          // Remove the optimistic temp message (same body/timestamp may not match exactly)
-          const withoutTemp = prev.filter((m) => m?.id !== tempId);
-          // Add a "synced" representation that matches the UI shape
-          const syncedUi = {
-            id: serverItem.messageId,
-            messageId: serverItem.messageId,
-            message_content: serverItem.body ?? trimmed,
-            is_sent: true,
-            timestamp: serverItem.timestamp ?? nowIso,
-            sync_status: "synced",
-            raw: serverItem,
-          };
-          return dedupeAndSort([...withoutTemp, syncedUi]);
-        });
-      } else {
-        // If response is not as expected, just mark optimistic as synced and optionally refresh once
+        // replace optimistic entry with a synced local entry
         setLocalMessages((prev) =>
-          prev.map((m) => (m?.id === tempId ? { ...m, sync_status: "synced" } : m))
+          prev.map((m) =>
+            m.id === tempId
+              ? {
+                  ...m,
+                  id: serverItem.messageId,
+                  messageId: serverItem.messageId,
+                  timestamp: serverItem.timestamp || m.timestamp,
+                  sync_status: "synced",
+                }
+              : m
+          )
         );
-        onRefresh && onRefresh();
+      } else {
+        // If your api wrapper returns { data: ... } style, try fallback:
+        const maybe = serverItem?.data;
+        if (maybe?.messageId) {
+          onMessageSent && onMessageSent(maybe);
+          setLocalMessages((prev) =>
+            prev.map((m) =>
+              m.id === tempId
+                ? {
+                    ...m,
+                    id: maybe.messageId,
+                    messageId: maybe.messageId,
+                    timestamp: maybe.timestamp || m.timestamp,
+                    sync_status: "synced",
+                  }
+                : m
+            )
+          );
+        } else {
+          // last resort: mark optimistic synced and optionally refresh once
+          setLocalMessages((prev) =>
+            prev.map((m) => (m.id === tempId ? { ...m, sync_status: "synced" } : m))
+          );
+          onRefresh && onRefresh(); // fallback only
+        }
       }
     } catch (error) {
       console.error("Failed to send message:", error);
       setLocalMessages((prev) =>
-        prev.map((m) => (m?.id === tempId ? { ...m, sync_status: "error" } : m))
+        prev.map((m) =>
+          m.id === tempId ? { ...m, sync_status: "error" } : m
+        )
       );
->>>>>>> c72b082 (A concise description of the edit/feature)
       alert("Failed to send message. Please try again.");
     } finally {
       setIsSending(false);
@@ -271,24 +170,18 @@ export default function MessageThread({
   };
 
   const formatMessageTime = (timestamp) => {
-<<<<<<< HEAD
-    const date = new Date(timestamp);
+    if (!timestamp) return "";
+    const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+
+    if (Number.isNaN(date.getTime())) return "";
+
     if (isToday(date)) {
       return format(date, "h:mm a");
     } else if (isYesterday(date)) {
-      return format(date, "Yesterday h:mm a");
+      return format(date, "'Yesterday' h:mm a");
     } else {
       return format(date, "MMM d, h:mm a");
     }
-=======
-    if (!timestamp) return "";
-    const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
-    if (Number.isNaN(date.getTime())) return "";
-
-    if (isToday(date)) return format(date, "h:mm a");
-    if (isYesterday(date)) return format(date, "'Yesterday' h:mm a");
-    return format(date, "MMM d, h:mm a");
->>>>>>> c72b082 (A concise description of the edit/feature)
   };
 
   const getInitials = (name, phone) => {
@@ -303,17 +196,6 @@ export default function MessageThread({
     return phone ? phone.slice(-2) : "??";
   };
 
-<<<<<<< HEAD
-=======
-  // Precompute keys once per render (stable, avoids repeated key computation)
-  const keyedMessages = useMemo(() => {
-    return localMessages.map((m, idx) => ({
-      m,
-      k: stableMessageKey(m) + `|i:${idx}`, // ensures uniqueness even in rare collision
-    }));
-  }, [localMessages]);
-
->>>>>>> c72b082 (A concise description of the edit/feature)
   return (
     <div className="flex flex-col h-full">
       {/* HEADER */}
@@ -322,10 +204,7 @@ export default function MessageThread({
           <div className="flex items-center gap-3">
             <Avatar className="w-10 h-10">
               <AvatarFallback className="bg-gradient-to-br from-green-500 to-emerald-600 text-white font-semibold">
-                {getInitials(
-                  conversation.contact_name,
-                  conversation.phone_number
-                )}
+                {getInitials(conversation.contact_name, conversation.phone_number)}
               </AvatarFallback>
             </Avatar>
             <div>
@@ -373,26 +252,14 @@ export default function MessageThread({
       {/* MESSAGES */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white">
         <AnimatePresence>
-<<<<<<< HEAD
           {localMessages.map((message, index) => (
             <motion.div
-              key={message.id || `${message.timestamp}-${index}`}
-=======
-          {keyedMessages.map(({ m: message, k }) => (
-            <motion.div
-              key={k}
->>>>>>> c72b082 (A concise description of the edit/feature)
+              key={message.messageId || message.id || `${message.timestamp}-${index}`}
               layout
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3 }}
-<<<<<<< HEAD
-              className={`flex ${
-                message.is_sent ? "justify-end" : "justify-start"
-              }`}
-=======
               className={`flex ${message.is_sent ? "justify-end" : "justify-start"}`}
->>>>>>> c72b082 (A concise description of the edit/feature)
             >
               <div
                 className={`max-w-xs lg:max-w-md px-4 py-3 rounded-2xl ${
@@ -401,13 +268,9 @@ export default function MessageThread({
                     : "bg-slate-100 text-slate-900 border border-slate-200"
                 }`}
               >
-<<<<<<< HEAD
                 <p className="text-sm leading-relaxed">
                   {message.message_content}
                 </p>
-=======
-                <p className="text-sm leading-relaxed">{message.message_content}</p>
->>>>>>> c72b082 (A concise description of the edit/feature)
                 <div
                   className={`flex items-center justify-end gap-1 mt-2 text-xs ${
                     message.is_sent ? "text-green-100" : "text-slate-500"

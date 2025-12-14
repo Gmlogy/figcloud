@@ -3,12 +3,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Search, Plus } from "lucide-react";
 import { motion } from "framer-motion";
-<<<<<<< HEAD
-import { getCurrentUser } from "aws-amplify/auth";
-=======
 
 import { getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
->>>>>>> c72b082 (A concise description of the edit/feature)
 import { api } from "@/lib/api";
 import { normalizePhoneNumber } from "@/utils/phoneUtils";
 
@@ -67,13 +63,8 @@ export default function DashboardPage() {
   const [activeFilter, setActiveFilter] = useState("all");
   const [isLoading, setIsLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState(null);
-<<<<<<< HEAD
-  const [isNewConversationModalOpen, setIsNewConversationModalOpen] =
-    useState(false);
-=======
 
   const [isNewConversationModalOpen, setIsNewConversationModalOpen] = useState(false);
->>>>>>> c72b082 (A concise description of the edit/feature)
   const [ephemeralConversations, setEphemeralConversations] = useState({});
 
   // --- WS refs/state ---
@@ -224,12 +215,6 @@ export default function DashboardPage() {
     setIsLoading(true);
     try {
       // Current user
-<<<<<<< HEAD
-      const { signInDetails } = await getCurrentUser();
-      const user = {
-        phone_number: signInDetails.loginId,
-      };
-=======
       const current = await getCurrentUser();
 
       // This is how your existing code was doing it:
@@ -237,46 +222,27 @@ export default function DashboardPage() {
       const phoneFromLoginId = current?.signInDetails?.loginId;
 
       const user = { phone_number: phoneFromAttributes || phoneFromLoginId || "" };
->>>>>>> c72b082 (A concise description of the edit/feature)
       setCurrentUser(user);
 
       // Fetch messages
       let messagesArray = [];
       try {
         const fetchedMessages = await api.get("/messages");
-<<<<<<< HEAD
-        messagesArray = Array.isArray(fetchedMessages)
-          ? fetchedMessages
-          : fetchedMessages.Items || [];
-=======
         messagesArray = safeArray(fetchedMessages);
->>>>>>> c72b082 (A concise description of the edit/feature)
       } catch (err) {
         console.error("Error fetching /messages:", err);
         messagesArray = [];
       }
 
-<<<<<<< HEAD
-      // Fetch contacts independently (can fail with 500)
-      let contactsArray = [];
-      try {
-        const fetchedContacts = await api.get("/contacts");
-        contactsArray = Array.isArray(fetchedContacts)
-          ? fetchedContacts
-          : fetchedContacts.Items || [];
-=======
       // Fetch contacts
       let contactsArray = [];
       try {
         const fetchedContacts = await api.get("/contacts");
         contactsArray = safeArray(fetchedContacts);
->>>>>>> c72b082 (A concise description of the edit/feature)
       } catch (err) {
         console.error("Error fetching /contacts:", err);
         contactsArray = [];
       }
-<<<<<<< HEAD
-=======
 
       // Fetch thread read cursors (new)
       let readsArray = [];
@@ -287,7 +253,6 @@ export default function DashboardPage() {
         console.error("Error fetching /threads/read:", err);
         readsArray = [];
       }
->>>>>>> c72b082 (A concise description of the edit/feature)
 
       setMessages(messagesArray);
       setContacts(
@@ -295,10 +260,7 @@ export default function DashboardPage() {
           (a.full_name || "").localeCompare(b.full_name || "")
         )
       );
-<<<<<<< HEAD
-=======
       setThreadReads(extractLastReadMap(readsArray));
->>>>>>> c72b082 (A concise description of the edit/feature)
     } catch (error) {
       console.error("Error in loadInitialData wrapper:", error);
       setMessages([]);
@@ -309,90 +271,6 @@ export default function DashboardPage() {
     }
   };
 
-<<<<<<< HEAD
-  const conversations = Array.isArray(messages)
-    ? messages.reduce((acc, message) => {
-        if (!currentUser || !currentUser.phone_number) return acc;
-
-        const normalizedCurrentUserPhone = normalizePhoneNumber(
-          currentUser.phone_number
-        );
-        const normalizedAddress = normalizePhoneNumber(message.address);
-
-        if (!normalizedCurrentUserPhone || !normalizedAddress) return acc;
-
-        // Build consistent thread id
-        const participants = [normalizedCurrentUserPhone, normalizedAddress].sort();
-        const threadId = participants.join("_");
-
-        if (!acc[threadId]) {
-          const contact = contacts.find(
-            (c) => normalizePhoneNumber(c.phone_number) === normalizedAddress
-          );
-
-          acc[threadId] = {
-            thread_id: threadId,
-            contact_name: contact?.full_name || message.address,
-            phone_number: normalizedAddress,
-            messages: [],
-            last_message: null,
-            unread_count: 0,
-            is_group: message.is_group || false,
-          };
-        }
-
-        const msgType = (message.messageType || "").toString().toUpperCase();
-        const isSent = msgType === "SENT";
-        const isIncoming = !isSent;
-
-        const timestamp =
-          message.timestamp || message.date || new Date().toISOString();
-
-        acc[threadId].messages.push({
-          id: timestamp,
-          message_content: message.body,
-          timestamp,
-          is_sent: isSent,
-          sync_status: "synced",
-        });
-
-        // ------ UNREAD LOGIC (treat missing read field as unread) ------
-        const hasReadField =
-          Object.prototype.hasOwnProperty.call(message, "read") &&
-          typeof message.read === "boolean";
-
-        // Unread if:
-        //  - incoming AND
-        //  - (no read field at all OR read === false)
-        const isUnread =
-  message.read === false ||      // proper boolean false
-  message.read === 0 ||          // legacy int
-  message.read === "0";          // just in case
-
-if (isUnread && message.messageType !== "SENT") {
-  acc[threadId].unread_count += 1;
-}
-
-        // ---------------------------------------------------------------
-
-        const existingLast = acc[threadId].last_message;
-        const existingTs = existingLast
-          ? new Date(existingLast.timestamp)
-          : new Date(0);
-
-        if (!existingLast || new Date(timestamp) > existingTs) {
-          acc[threadId].last_message = {
-            ...message,
-            message_content: message.body,
-            is_sent: isSent,
-            timestamp,
-          };
-        }
-
-        return acc;
-      }, {})
-    : {};
-=======
   const refreshMessages = async () => {
     await loadInitialData();
     setEphemeralConversations({});
@@ -481,58 +359,10 @@ if (isUnread && message.messageType !== "SENT") {
       const lastReadAt = threadReads[threadId];
       const lastReadTime = lastReadAt ? new Date(lastReadAt).getTime() : 0;
       const msgTime = new Date(timestamp).getTime();
->>>>>>> c72b082 (A concise description of the edit/feature)
 
       const isIncoming = !isSent;
       const isUnreadByCursor = isIncoming && msgTime > lastReadTime;
 
-<<<<<<< HEAD
-  Object.values(allConversations).forEach((conv) => {
-    conv.display_name = conv.contact_name || conv.phone_number;
-    if (conv.messages) {
-      conv.messages.sort(
-        (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
-      );
-    }
-  });
-
-  const conversationList = Object.values(allConversations)
-    .sort((a, b) => {
-      const dateA = a.last_message
-        ? new Date(a.last_message.timestamp)
-        : new Date(0);
-      const dateB = b.last_message
-        ? new Date(b.last_message.timestamp)
-        : new Date(0);
-      return dateB - dateA;
-    })
-    .filter((conv) => {
-      switch (activeFilter) {
-        case "unread":
-          if (conv.unread_count === 0) return false;
-          break;
-        case "groups":
-          if (!conv.is_group) return false;
-          break;
-        case "all":
-        default:
-          break;
-      }
-
-      if (searchQuery) {
-        return conv.display_name
-          ?.toLowerCase()
-          .includes(searchQuery.toLowerCase());
-      }
-
-      return true;
-    });
-
-  const refreshMessages = async () => {
-    await loadInitialData();
-    setEphemeralConversations({});
-  };
-=======
       if (isUnreadByCursor) acc[threadId].unread_count += 1;
       // -----------------------------------------------
 
@@ -589,20 +419,15 @@ if (isUnread && message.messageType !== "SENT") {
         return true;
       });
   }, [allConversations, activeFilter, searchQuery]);
->>>>>>> c72b082 (A concise description of the edit/feature)
 
   const handleStartConversation = (recipient) => {
     if (!currentUser || !recipient.phone_number) return;
 
-<<<<<<< HEAD
-    const participants = [currentUser.phone_number, recipient.phone_number].sort();
-=======
     const participants = [
       currentUser.phone_number || currentUser.phoneNumber,
       recipient.phone_number,
     ].filter(Boolean).sort();
 
->>>>>>> c72b082 (A concise description of the edit/feature)
     const newThreadId = participants.join("_");
 
     if (!allConversations[newThreadId]) {
@@ -631,11 +456,6 @@ if (isUnread && message.messageType !== "SENT") {
     markThreadRead(newThreadId, lastTs || new Date().toISOString());
   };
 
-<<<<<<< HEAD
-  const selectedConversation = selectedThreadId
-    ? allConversations[selectedThreadId]
-    : null;
-=======
   const handleSelectThread = (threadId) => {
     setSelectedThreadId(threadId);
 
@@ -647,7 +467,6 @@ if (isUnread && message.messageType !== "SENT") {
   };
 
   const selectedConversation = selectedThreadId ? allConversations[selectedThreadId] : null;
->>>>>>> c72b082 (A concise description of the edit/feature)
 
   return (
     <>
@@ -685,10 +504,7 @@ if (isUnread && message.messageType !== "SENT") {
           </div>
 
           <SecurityBanner currentUser={currentUser} />
-<<<<<<< HEAD
-=======
 
->>>>>>> c72b082 (A concise description of the edit/feature)
           <StatsOverview
             messages={messages}
             conversations={Object.values(allConversations)}
@@ -713,8 +529,6 @@ if (isUnread && message.messageType !== "SENT") {
               conversation={selectedConversation}
               currentUser={currentUser}
               onRefresh={refreshMessages}
-<<<<<<< HEAD
-=======
               onMarkRead={(threadId) => {
                 const lastTs = selectedConversation?.last_message?.timestamp;
                 markThreadRead(threadId, lastTs || new Date().toISOString());
@@ -728,7 +542,6 @@ if (isUnread && message.messageType !== "SENT") {
                   return [...prev, { ...serverItem, messageId: mid }];
                 });
               }}
->>>>>>> c72b082 (A concise description of the edit/feature)
             />
           ) : (
             <div className="flex-1 flex items-center justify-center bg-slate-50">
@@ -746,28 +559,16 @@ if (isUnread && message.messageType !== "SENT") {
                 <p className="max-w-sm text-slate-600">
                   Choose a conversation from the list to view your synced messages
                 </p>
-<<<<<<< HEAD
-=======
 
->>>>>>> c72b082 (A concise description of the edit/feature)
                 <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg max-w-md mx-auto">
                   <div className="flex items-center justify-center gap-2 mb-2">
                     <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
                     <span className="text-sm font-medium text-green-800">
-<<<<<<< HEAD
-                      Fig Phone Connected
-                    </span>
-                  </div>
-                  <p className="text-xs text-green-600">
-                    Real-time sync active • Keep your Fig Phone powered on and
-                    connected.
-=======
                       Real-time connected
                     </span>
                   </div>
                   <p className="text-xs text-green-600">
                     Messages update instantly • Keep your phone connected.
->>>>>>> c72b082 (A concise description of the edit/feature)
                   </p>
                 </div>
               </motion.div>
