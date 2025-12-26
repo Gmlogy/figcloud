@@ -123,15 +123,9 @@ function getDisplayTextWithoutMmsPlaceholder(message) {
 
   if (!mms) return body || "";
 
-  // If MMS has text, show it.
   const t = String(text || "").trim();
   if (t) return t;
 
-  // Some backends store MMS text in body
-  // const b = String(body || "").trim();
-  // if (b && b !== "[MMS]") return b;
-
-  // Otherwise: show no placeholder line at all.
   return "";
 }
 
@@ -145,7 +139,6 @@ function getDisplayTextWithoutMmsPlaceholder(message) {
 function AttachmentList({ message, isSent }) {
   const atts = normalizeAttachments(message);
 
-  // resolved[key] = { url, ts, failedOnce }
   const [resolved, setResolved] = useState({});
   const inFlightRef = useRef(new Set());
 
@@ -168,9 +161,7 @@ function AttachmentList({ message, isSent }) {
       inFlightRef.current.add(key);
 
       try {
-        const resp = await api.get(
-          `/mms/download-url?key=${encodeURIComponent(key)}`
-        );
+        const resp = await api.get(`/mms/download-url?key=${encodeURIComponent(key)}`);
         const url =
           resp?.url ||
           resp?.data?.url ||
@@ -255,9 +246,7 @@ function AttachmentList({ message, isSent }) {
                   <span className="font-medium truncate">{name}</span>
                   {mime ? (
                     <span
-                      className={`${
-                        isSent ? "text-green-100" : "text-slate-500"
-                      } shrink-0`}
+                      className={`${isSent ? "text-green-100" : "text-slate-500"} shrink-0`}
                     >
                       ({mime})
                     </span>
@@ -273,18 +262,12 @@ function AttachmentList({ message, isSent }) {
                 type="button"
                 size="icon"
                 variant="ghost"
-                className={`h-8 w-8 rounded-full ${
-                  isSent ? "hover:bg-white/10" : "hover:bg-slate-100"
-                }`}
+                className={`h-8 w-8 rounded-full ${isSent ? "hover:bg-white/10" : "hover:bg-slate-100"}`}
                 disabled={!canOpen}
                 onClick={() => openAttachment(a)}
                 title={canOpen ? "Open" : "Loading"}
               >
-                {isImg ? (
-                  <ImageIcon className="w-4 h-4" />
-                ) : (
-                  <ExternalLink className="w-4 h-4" />
-                )}
+                {isImg ? <ImageIcon className="w-4 h-4" /> : <ExternalLink className="w-4 h-4" />}
               </Button>
             </div>
 
@@ -318,13 +301,7 @@ function AttachmentList({ message, isSent }) {
   );
 }
 
-export default function MessageThread({
-  conversation,
-  currentUser,
-  onRefresh,
-  onMarkRead,
-  onMessageSent,
-}) {
+export default function MessageThread({ conversation, currentUser, onRefresh }) {
   const [newMessage, setNewMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [localMessages, setLocalMessages] = useState([]);
@@ -338,12 +315,11 @@ export default function MessageThread({
   );
 
   // --- DEDUPE HELPERS (inside component, stable) ---
+  // NOTE: widen bucket slightly so "API echo" and "phone sync" collapse when close in time
   const fingerprintLocal = useCallback(
     (m) => {
       const dir = m?.is_sent ? "S" : "R";
-      const body = String(
-        m?.message_content ?? m?.text ?? m?.raw?.body ?? ""
-      ).trim();
+      const body = String(m?.message_content ?? m?.text ?? m?.raw?.body ?? "").trim();
 
       const atts = Array.isArray(m?.attachments) ? m.attachments : [];
       const attSig = atts
@@ -354,7 +330,7 @@ export default function MessageThread({
 
       const ts = m?.timestamp || Date.now();
       const tsMs = new Date(ts).getTime();
-      const bucket = Math.floor((Number.isFinite(tsMs) ? tsMs : Date.now()) / 5000);
+      const bucket = Math.floor((Number.isFinite(tsMs) ? tsMs : Date.now()) / 10_000); // 10s bucket
 
       return `${dir}|${otherNumber}|${body}|${attSig}|${bucket}`;
     },
@@ -402,15 +378,14 @@ export default function MessageThread({
   // Merge server messages into local view + dedupe
   useEffect(() => {
     const server = Array.isArray(conversation?.messages) ? conversation.messages : [];
-    const sortedServer = [...server].sort(
-      (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
-    );
+    const sortedServer = [...server].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
     setLocalMessages((prev) => {
       const serverIds = new Set(
         sortedServer.map((m) => m.messageId || m.id || `${m.timestamp}|${m.message_content}`)
       );
 
+      // Keep only pending/error locals; synced locals should be replaced by server/phone truth
       const keepLocal = prev.filter((m) => {
         if (m.sync_status !== "pending" && m.sync_status !== "error") return false;
         const key = m.messageId || m.id || `${m.timestamp}|${m.message_content}`;
@@ -428,13 +403,6 @@ export default function MessageThread({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [localMessages.length]);
-
-  useEffect(() => {
-    if (!conversation || !currentUser || !onMarkRead) return;
-    const threadId = getCanonicalThreadId();
-    onMarkRead(threadId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversation.thread_id, currentUser?.phone_number, onMarkRead]);
 
   const handleSendMessage = async (e) => {
     e.preventDefault();
@@ -461,40 +429,19 @@ export default function MessageThread({
     setNewMessage("");
 
     try {
-      const resp = await api.post("/messages", { threadId, body: trimmed });
-      const serverItem = resp && typeof resp === "object" ? resp : null;
+      // IMPORTANT: do NOT treat API response as a final stored “sent message”.
+      // The phone will create the real SMS record and sync it back; using API response causes duplicates.
+      await api.post("/messages", { threadId, body: trimmed });
 
-      const item = serverItem?.messageId
-        ? serverItem
-        : serverItem?.data?.messageId
-        ? serverItem.data
-        : null;
+      setLocalMessages((prev) =>
+        dedupeLocalMessages(
+          prev.map((m) => (m.id === tempId ? { ...m, sync_status: "synced" } : m))
+        )
+      );
 
-      if (item?.messageId) {
-        onMessageSent && onMessageSent(item);
-
-        setLocalMessages((prev) => {
-          const replaced = prev.map((m) =>
-            m.id === tempId
-              ? {
-                  ...m,
-                  id: item.messageId,
-                  messageId: item.messageId,
-                  timestamp: item.timestamp || m.timestamp,
-                  sync_status: "synced",
-                }
-              : m
-          );
-          return dedupeLocalMessages(replaced);
-        });
-      } else {
-        setLocalMessages((prev) =>
-          dedupeLocalMessages(
-            prev.map((m) => (m.id === tempId ? { ...m, sync_status: "synced" } : m))
-          )
-        );
-        onRefresh && onRefresh();
-      }
+      // Optional: if you want, you can refresh after a short delay
+      // (but usually WS/phone sync will bring it in)
+      // onRefresh && onRefresh();
     } catch (error) {
       console.error("Failed to send message:", error);
       setLocalMessages((prev) =>
