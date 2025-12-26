@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { format, isToday, isYesterday } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -6,7 +6,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
-import { Phone, Video, MoreVertical, Send, Check, Clock, Wifi } from "lucide-react";
+import {
+  Phone,
+  Video,
+  MoreVertical,
+  Send,
+  Check,
+  Clock,
+  Wifi,
+  Paperclip,
+  Image as ImageIcon,
+  ExternalLink,
+} from "lucide-react";
 
 const MessageStatusIcon = ({ message }) => {
   if (!message.is_sent) return null;
@@ -21,12 +32,298 @@ const MessageStatusIcon = ({ message }) => {
   }
 };
 
+function formatMessageTime(timestamp) {
+  if (!timestamp) return "";
+  const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+
+  if (isToday(date)) return format(date, "h:mm a");
+  if (isYesterday(date)) return format(date, "'Yesterday' h:mm a");
+  return format(date, "MMM d, h:mm a");
+}
+
+function getInitials(name, phone) {
+  if (name && name !== phone) {
+    return name
+      .split(" ")
+      .map((n) => n[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
+  }
+  return phone ? phone.slice(-2) : "??";
+}
+
+function normalizeAttachments(message) {
+  const atts = Array.isArray(message?.attachments)
+    ? message.attachments
+    : Array.isArray(message?.raw?.attachments)
+    ? message.raw.attachments
+    : [];
+  return atts.filter(Boolean);
+}
+
+function isMmsMessage(message) {
+  if (!message) return false;
+  if (message.is_mms === true) return true;
+  const kind = String(message.kind || message.raw?.kind || "").toLowerCase();
+  const atts = normalizeAttachments(message);
+  return kind === "mms" || atts.length > 0;
+}
+
+function getMime(att) {
+  return (
+    att?.mimeType ||
+    att?.mime_type ||
+    att?.contentType ||
+    att?.content_type ||
+    att?.type ||
+    ""
+  );
+}
+
+function getFileName(att, idx) {
+  return (
+    att?.fileName ||
+    att?.file_name ||
+    att?.name ||
+    att?.filename ||
+    `Attachment ${idx + 1}`
+  );
+}
+
+function getS3Key(att) {
+  return att?.s3Key || att?.s3_key || "";
+}
+
+function isImageMime(mime) {
+  return typeof mime === "string" && mime.toLowerCase().startsWith("image/");
+}
+
+/**
+ * IMPORTANT CHANGE:
+ * - For MMS, we do NOT show "[MMS] (x attachments)" at all.
+ * - We only show actual text content if present.
+ */
+function getDisplayTextWithoutMmsPlaceholder(message) {
+  const m = message || {};
+  const raw = m.raw || {};
+  const mms = isMmsMessage(m);
+
+  const text =
+    (typeof m.text === "string" && m.text) ||
+    (typeof raw.text === "string" && raw.text) ||
+    "";
+
+  const body =
+    (typeof m.message_content === "string" && m.message_content) ||
+    (typeof raw.body === "string" && raw.body) ||
+    (typeof raw.message_content === "string" && raw.message_content) ||
+    "";
+
+  if (!mms) return body || "";
+
+  // If MMS has text, show it.
+  const t = String(text || "").trim();
+  if (t) return t;
+
+  // Some backends store MMS text in body
+  // const b = String(body || "").trim();
+  // if (b && b !== "[MMS]") return b;
+
+  // Otherwise: show no placeholder line at all.
+  return "";
+}
+
+/**
+ * AttachmentList:
+ * - AUTO resolves signed URL for each attachment with s3Key
+ * - AUTO previews images inline as soon as URL is available
+ * - Provides Open button (opens in new tab)
+ * - Retries once if image fails to load (URL can expire)
+ */
+function AttachmentList({ message, isSent }) {
+  const atts = normalizeAttachments(message);
+
+  // resolved[key] = { url, ts, failedOnce }
+  const [resolved, setResolved] = useState({});
+  const inFlightRef = useRef(new Set());
+
+  const resetKey = useMemo(
+    () => `${message?.messageId || message?.id || ""}|${message?.timestamp || ""}`,
+    [message?.messageId, message?.id, message?.timestamp]
+  );
+
+  useEffect(() => {
+    setResolved({});
+    inFlightRef.current = new Set();
+  }, [resetKey]);
+
+  const fetchDownloadUrl = useCallback(
+    async (key) => {
+      if (!key) return null;
+      if (resolved[key]?.url) return resolved[key].url;
+
+      if (inFlightRef.current.has(key)) return null;
+      inFlightRef.current.add(key);
+
+      try {
+        const resp = await api.get(
+          `/mms/download-url?key=${encodeURIComponent(key)}`
+        );
+        const url =
+          resp?.url ||
+          resp?.data?.url ||
+          resp?.data?.URL ||
+          resp?.URL ||
+          null;
+
+        if (url) {
+          setResolved((prev) => ({
+            ...prev,
+            [key]: {
+              url,
+              ts: Date.now(),
+              failedOnce: prev[key]?.failedOnce || false,
+            },
+          }));
+        }
+        return url;
+      } catch (e) {
+        console.error("fetchDownloadUrl failed:", e);
+        return null;
+      } finally {
+        inFlightRef.current.delete(key);
+      }
+    },
+    [resolved]
+  );
+
+  useEffect(() => {
+    if (!atts.length) return;
+    const keys = atts.map(getS3Key).filter(Boolean);
+    keys.forEach((k) => {
+      if (!resolved[k]?.url) fetchDownloadUrl(k);
+    });
+  }, [atts, fetchDownloadUrl, resolved]);
+
+  const openAttachment = async (att) => {
+    const key = getS3Key(att);
+    if (!key) return;
+
+    const url = resolved[key]?.url || (await fetchDownloadUrl(key));
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const handleImgError = async (att) => {
+    const key = getS3Key(att);
+    if (!key) return;
+    if (resolved[key]?.failedOnce) return;
+
+    setResolved((prev) => ({
+      ...prev,
+      [key]: { ...(prev[key] || {}), failedOnce: true },
+    }));
+
+    await fetchDownloadUrl(key);
+  };
+
+  if (!atts.length) return null;
+
+  return (
+    <div className={`mt-2 space-y-2 ${isSent ? "text-green-50" : "text-slate-700"}`}>
+      {atts.map((a, idx) => {
+        const mime = getMime(a);
+        const name = getFileName(a, idx);
+        const key = getS3Key(a);
+
+        const url = key ? resolved[key]?.url : null;
+        const canOpen = !!(key && url);
+        const isImg = isImageMime(mime);
+
+        return (
+          <div
+            key={`${name}-${idx}`}
+            className={`rounded-lg px-3 py-2 border ${
+              isSent ? "border-white/25 bg-white/10" : "border-slate-200 bg-white"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-xs">
+                  <Paperclip className="w-3 h-3 shrink-0" />
+                  <span className="font-medium truncate">{name}</span>
+                  {mime ? (
+                    <span
+                      className={`${
+                        isSent ? "text-green-100" : "text-slate-500"
+                      } shrink-0`}
+                    >
+                      ({mime})
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className={`text-[11px] mt-1 ${isSent ? "text-green-100" : "text-slate-500"}`}>
+                  {key ? (url ? "Ready" : "Loading…") : "No key — waiting for upload"}
+                </div>
+              </div>
+
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className={`h-8 w-8 rounded-full ${
+                  isSent ? "hover:bg-white/10" : "hover:bg-slate-100"
+                }`}
+                disabled={!canOpen}
+                onClick={() => openAttachment(a)}
+                title={canOpen ? "Open" : "Loading"}
+              >
+                {isImg ? (
+                  <ImageIcon className="w-4 h-4" />
+                ) : (
+                  <ExternalLink className="w-4 h-4" />
+                )}
+              </Button>
+            </div>
+
+            {isImg ? (
+              <div className="mt-3">
+                {url ? (
+                  <img
+                    src={url}
+                    alt={name}
+                    className="max-h-64 w-auto rounded-md border border-slate-200"
+                    loading="lazy"
+                    style={{ cursor: "pointer" }}
+                    onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+                    onError={() => handleImgError(a)}
+                  />
+                ) : (
+                  <div
+                    className={`text-xs rounded-md px-3 py-2 ${
+                      isSent ? "bg-white/10 text-green-100" : "bg-slate-50 text-slate-500"
+                    }`}
+                  >
+                    Loading image…
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function MessageThread({
   conversation,
   currentUser,
-  onRefresh,      // optional fallback
-  onMarkRead,     // optional
-  onMessageSent,  // NEW: parent state update hook
+  onRefresh,
+  onMarkRead,
+  onMessageSent,
 }) {
   const [newMessage, setNewMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -34,6 +331,62 @@ export default function MessageThread({
   const messagesEndRef = useRef(null);
 
   if (!conversation || !currentUser) return null;
+
+  const otherNumber = useMemo(
+    () => String(conversation?.phone_number || conversation?.phoneNumber || ""),
+    [conversation?.phone_number, conversation?.phoneNumber]
+  );
+
+  // --- DEDUPE HELPERS (inside component, stable) ---
+  const fingerprintLocal = useCallback(
+    (m) => {
+      const dir = m?.is_sent ? "S" : "R";
+      const body = String(
+        m?.message_content ?? m?.text ?? m?.raw?.body ?? ""
+      ).trim();
+
+      const atts = Array.isArray(m?.attachments) ? m.attachments : [];
+      const attSig = atts
+        .map((a) => String(a?.s3Key || a?.s3_key || a?.key || a?.name || ""))
+        .filter(Boolean)
+        .slice(0, 3)
+        .join(",");
+
+      const ts = m?.timestamp || Date.now();
+      const tsMs = new Date(ts).getTime();
+      const bucket = Math.floor((Number.isFinite(tsMs) ? tsMs : Date.now()) / 5000);
+
+      return `${dir}|${otherNumber}|${body}|${attSig}|${bucket}`;
+    },
+    [otherNumber]
+  );
+
+  const dedupeLocalMessages = useCallback(
+    (arr) => {
+      const out = [];
+      const seen = new Set();
+
+      for (const m of Array.isArray(arr) ? arr : []) {
+        const mid = m?.messageId || m?.id || null;
+
+        if (mid) {
+          const k = `id:${mid}`;
+          if (seen.has(k)) continue;
+          seen.add(k);
+          out.push(m);
+          continue;
+        }
+
+        const k = `fp:${fingerprintLocal(m)}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(m);
+      }
+
+      return out;
+    },
+    [fingerprintLocal]
+  );
 
   const getCanonicalThreadId = () => {
     const me = currentUser?.phone_number || currentUser?.phoneNumber;
@@ -46,14 +399,13 @@ export default function MessageThread({
     return conversation.thread_id;
   };
 
-  // Merge server messages into local view
+  // Merge server messages into local view + dedupe
   useEffect(() => {
     const server = Array.isArray(conversation?.messages) ? conversation.messages : [];
     const sortedServer = [...server].sort(
       (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
     );
 
-    // Keep any local pending/error messages that are not in server list
     setLocalMessages((prev) => {
       const serverIds = new Set(
         sortedServer.map((m) => m.messageId || m.id || `${m.timestamp}|${m.message_content}`)
@@ -68,9 +420,10 @@ export default function MessageThread({
       const merged = [...sortedServer, ...keepLocal].sort(
         (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
       );
-      return merged;
+
+      return dedupeLocalMessages(merged);
     });
-  }, [conversation.messages]);
+  }, [conversation?.messages, dedupeLocalMessages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -91,7 +444,6 @@ export default function MessageThread({
     const threadId = getCanonicalThreadId();
     const nowIso = new Date().toISOString();
 
-    // Optimistic message
     const tempId = `temp-${Date.now()}`;
     const optimistic = {
       id: tempId,
@@ -100,100 +452,58 @@ export default function MessageThread({
       is_sent: true,
       timestamp: nowIso,
       sync_status: "pending",
+      is_mms: false,
+      attachments: [],
     };
 
     setIsSending(true);
-    setLocalMessages((prev) => [...prev, optimistic]);
+    setLocalMessages((prev) => dedupeLocalMessages([...prev, optimistic]));
     setNewMessage("");
 
     try {
-      // IMPORTANT: expect server returns messageItem with messageId, timestamp, threadId...
       const resp = await api.post("/messages", { threadId, body: trimmed });
-
       const serverItem = resp && typeof resp === "object" ? resp : null;
 
-      if (serverItem?.messageId) {
-        // update parent immediately (Dashboard state)
-        onMessageSent && onMessageSent(serverItem);
+      const item = serverItem?.messageId
+        ? serverItem
+        : serverItem?.data?.messageId
+        ? serverItem.data
+        : null;
 
-        // replace optimistic entry with a synced local entry
-        setLocalMessages((prev) =>
-          prev.map((m) =>
+      if (item?.messageId) {
+        onMessageSent && onMessageSent(item);
+
+        setLocalMessages((prev) => {
+          const replaced = prev.map((m) =>
             m.id === tempId
               ? {
                   ...m,
-                  id: serverItem.messageId,
-                  messageId: serverItem.messageId,
-                  timestamp: serverItem.timestamp || m.timestamp,
+                  id: item.messageId,
+                  messageId: item.messageId,
+                  timestamp: item.timestamp || m.timestamp,
                   sync_status: "synced",
                 }
               : m
+          );
+          return dedupeLocalMessages(replaced);
+        });
+      } else {
+        setLocalMessages((prev) =>
+          dedupeLocalMessages(
+            prev.map((m) => (m.id === tempId ? { ...m, sync_status: "synced" } : m))
           )
         );
-      } else {
-        // If your api wrapper returns { data: ... } style, try fallback:
-        const maybe = serverItem?.data;
-        if (maybe?.messageId) {
-          onMessageSent && onMessageSent(maybe);
-          setLocalMessages((prev) =>
-            prev.map((m) =>
-              m.id === tempId
-                ? {
-                    ...m,
-                    id: maybe.messageId,
-                    messageId: maybe.messageId,
-                    timestamp: maybe.timestamp || m.timestamp,
-                    sync_status: "synced",
-                  }
-                : m
-            )
-          );
-        } else {
-          // last resort: mark optimistic synced and optionally refresh once
-          setLocalMessages((prev) =>
-            prev.map((m) => (m.id === tempId ? { ...m, sync_status: "synced" } : m))
-          );
-          onRefresh && onRefresh(); // fallback only
-        }
+        onRefresh && onRefresh();
       }
     } catch (error) {
       console.error("Failed to send message:", error);
       setLocalMessages((prev) =>
-        prev.map((m) =>
-          m.id === tempId ? { ...m, sync_status: "error" } : m
-        )
+        prev.map((m) => (m.id === tempId ? { ...m, sync_status: "error" } : m))
       );
       alert("Failed to send message. Please try again.");
     } finally {
       setIsSending(false);
     }
-  };
-
-  const formatMessageTime = (timestamp) => {
-    if (!timestamp) return "";
-    const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
-
-    if (Number.isNaN(date.getTime())) return "";
-
-    if (isToday(date)) {
-      return format(date, "h:mm a");
-    } else if (isYesterday(date)) {
-      return format(date, "'Yesterday' h:mm a");
-    } else {
-      return format(date, "MMM d, h:mm a");
-    }
-  };
-
-  const getInitials = (name, phone) => {
-    if (name && name !== phone) {
-      return name
-        .split(" ")
-        .map((n) => n[0])
-        .join("")
-        .toUpperCase()
-        .slice(0, 2);
-    }
-    return phone ? phone.slice(-2) : "??";
   };
 
   return (
@@ -252,36 +562,47 @@ export default function MessageThread({
       {/* MESSAGES */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white">
         <AnimatePresence>
-          {localMessages.map((message, index) => (
-            <motion.div
-              key={message.messageId || message.id || `${message.timestamp}-${index}`}
-              layout
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3 }}
-              className={`flex ${message.is_sent ? "justify-end" : "justify-start"}`}
-            >
-              <div
-                className={`max-w-xs lg:max-w-md px-4 py-3 rounded-2xl ${
-                  message.is_sent
-                    ? "bg-gradient-to-r from-green-500 to-emerald-600 text-white"
-                    : "bg-slate-100 text-slate-900 border border-slate-200"
-                }`}
+          {localMessages.map((message, index) => {
+            const isSent = !!message.is_sent;
+            const mms = isMmsMessage(message);
+            const displayText = getDisplayTextWithoutMmsPlaceholder(message);
+
+            return (
+              <motion.div
+                key={message.messageId || message.id || `${message.timestamp}-${index}`}
+                layout
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3 }}
+                className={`flex ${isSent ? "justify-end" : "justify-start"}`}
               >
-                <p className="text-sm leading-relaxed">
-                  {message.message_content}
-                </p>
                 <div
-                  className={`flex items-center justify-end gap-1 mt-2 text-xs ${
-                    message.is_sent ? "text-green-100" : "text-slate-500"
+                  className={`max-w-xs lg:max-w-md px-4 py-3 rounded-2xl ${
+                    isSent
+                      ? "bg-gradient-to-r from-green-500 to-emerald-600 text-white"
+                      : "bg-slate-100 text-slate-900 border border-slate-200"
                   }`}
                 >
-                  <span>{formatMessageTime(message.timestamp)}</span>
-                  <MessageStatusIcon message={message} />
+                  {displayText ? (
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                      {displayText}
+                    </p>
+                  ) : null}
+
+                  {mms ? <AttachmentList message={message} isSent={isSent} /> : null}
+
+                  <div
+                    className={`flex items-center justify-end gap-1 mt-2 text-xs ${
+                      isSent ? "text-green-100" : "text-slate-500"
+                    }`}
+                  >
+                    <span>{formatMessageTime(message.timestamp)}</span>
+                    <MessageStatusIcon message={message} />
+                  </div>
                 </div>
-              </div>
-            </motion.div>
-          ))}
+              </motion.div>
+            );
+          })}
         </AnimatePresence>
 
         <div ref={messagesEndRef} />
