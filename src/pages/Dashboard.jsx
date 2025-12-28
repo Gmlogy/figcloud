@@ -31,18 +31,11 @@ function safeArray(resp) {
 
 /**
  * Robust timestamp -> epoch milliseconds.
- * Accepts:
- * - number (ms or seconds)
- * - numeric string ("1765..." ms/seconds)
- * - ISO string
- * - Date object
- * - null/undefined -> Date.now()
  */
 function toEpochMs(input) {
   if (input == null) return Date.now();
 
   if (typeof input === "number") {
-    // treat 10-digit as seconds
     return input < 1e12 ? input * 1000 : input;
   }
 
@@ -55,13 +48,11 @@ function toEpochMs(input) {
     const s = input.trim();
     if (!s) return Date.now();
 
-    // numeric string
     if (/^\d+$/.test(s)) {
       const n = Number(s);
       return n < 1e12 ? n * 1000 : n;
     }
 
-    // ISO date string
     const t = Date.parse(s);
     return Number.isFinite(t) ? t : Date.now();
   }
@@ -78,13 +69,11 @@ function toIsoFromMs(ms) {
   }
 }
 
-
 function safeStr(x) {
   return typeof x === "string" ? x : x == null ? "" : String(x);
 }
 
 // A “good enough” fingerprint for same-message dedupe.
-// Buckets timestamp into 5s windows so tiny timestamp differences don’t create dupes.
 function messageFingerprint(m) {
   const msgType = safeStr(m?.messageType || m?.message_type).toUpperCase();
   const dir = msgType === "SENT" ? "S" : "R";
@@ -92,7 +81,6 @@ function messageFingerprint(m) {
   const addr = normalizePhoneNumber(m?.address || m?.phone_number || "");
   const body = safeStr(m?.body ?? m?.message_content ?? m?.text ?? m?.raw?.body ?? "").trim();
 
-  // MMS: include attachment signature to avoid collapsing different media
   const atts = Array.isArray(m?.attachments) ? m.attachments : [];
   const attSig = atts
     .map((a) => safeStr(a?.s3Key || a?.s3_key || a?.key || a?.name || ""))
@@ -130,12 +118,6 @@ function dedupeMessagesArray(arr) {
   return out;
 }
 
-
-/**
- * Normalize threadId keys so web can match:
- * - phone-first:  +212698..._+212661...
- * - sorted:       +212661..._+212698... (what UI builds)
- */
 function normalizeThreadIdKey(threadId) {
   const s = String(threadId || "").trim();
   if (!s) return "";
@@ -151,10 +133,6 @@ function normalizeThreadIdKey(threadId) {
 }
 
 function extractLastReadMap(readRows) {
-  // Returns map { [threadIdOrAltKey]: ISO_STRING }
-  // Stores both:
-  // - raw key (as returned by API)
-  // - normalized participant key (sorted, normalized phones) when applicable
   const map = {};
 
   const writeMax = (key, iso) => {
@@ -174,7 +152,6 @@ function extractLastReadMap(readRows) {
     const rawKey = String(tidRaw);
     const normalizedKey = normalizeThreadIdKey(rawKey);
 
-    // Prefer ms field if present
     const msRaw =
       r.lastReadAtMs ??
       r.last_read_at_ms ??
@@ -189,7 +166,6 @@ function extractLastReadMap(readRows) {
       continue;
     }
 
-    // Otherwise ISO/date-like
     const isoRaw =
       r.lastReadAt ??
       r.last_read_at ??
@@ -209,8 +185,7 @@ function extractLastReadMap(readRows) {
 
 function extractIdToken(session) {
   const tokens = session?.tokens;
-  const idToken =
-    tokens?.idToken?.toString?.() || tokens?.idToken || session?.idToken || null;
+  const idToken = tokens?.idToken?.toString?.() || tokens?.idToken || session?.idToken || null;
   return typeof idToken === "string" ? idToken : null;
 }
 
@@ -235,10 +210,6 @@ function mergeReadMaps(prev, incoming) {
   return out;
 }
 
-/**
- * Resolve the best lastRead cursor for this thread/message by checking multiple possible keys.
- * This fixes “everything unread” when backend uses a different thread key (numeric thread_id, unsorted participant key, etc.)
- */
 function resolveLastReadIso(threadReads, threadId, message) {
   const keys = [];
 
@@ -248,7 +219,6 @@ function resolveLastReadIso(threadReads, threadId, message) {
   const normalizedTid = rawTid ? normalizeThreadIdKey(rawTid) : "";
   if (normalizedTid && normalizedTid !== rawTid) keys.push(normalizedTid);
 
-  // Backends/mobile often store read cursors keyed by numeric telephony thread id
   const msgThreadId =
     message?.threadId ??
     message?.thread_id ??
@@ -257,7 +227,6 @@ function resolveLastReadIso(threadReads, threadId, message) {
 
   if (msgThreadId != null) keys.push(String(msgThreadId));
 
-  // Some implementations store by address/recipient instead of computed participant key
   if (message?.address) keys.push(normalizePhoneNumber(message.address));
   if (message?.raw?.address) keys.push(normalizePhoneNumber(message.raw.address));
 
@@ -269,11 +238,6 @@ function resolveLastReadIso(threadReads, threadId, message) {
   return null;
 }
 
-/**
- * Build a message bubble text that works for both SMS and MMS.
- * - Prefers SMS body, MMS text
- * - If MMS has no text but has attachments, show "[MMS] (N attachments)"
- */
 function computeDisplayBody(message) {
   const raw = message || {};
   const atts = Array.isArray(raw.attachments) ? raw.attachments : [];
@@ -283,9 +247,8 @@ function computeDisplayBody(message) {
     kind === "mms" ||
     atts.length > 0 ||
     raw.msg_box != null ||
-    raw.thread_id != null; // (harmless extra heuristic)
+    raw.thread_id != null;
 
-  // Normalize candidate fields
   const body =
     (typeof raw.body === "string" && raw.body) ||
     (typeof raw.message_content === "string" && raw.message_content) ||
@@ -293,7 +256,6 @@ function computeDisplayBody(message) {
 
   const text = (typeof raw.text === "string" && raw.text) || "";
 
-  // MMS: prefer text; otherwise helpful placeholder
   if (isMms) {
     const t = text.trim();
     if (t) return t;
@@ -307,14 +269,13 @@ function computeDisplayBody(message) {
     return "[MMS]";
   }
 
-  // SMS: show body
   return body;
 }
 
 export default function DashboardPage() {
   const [messages, setMessages] = useState([]);
   const [contacts, setContacts] = useState([]);
-  const [threadReads, setThreadReads] = useState({}); // { [threadId]: ISO string }
+  const [threadReads, setThreadReads] = useState({});
 
   const [selectedThreadId, setSelectedThreadId] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -322,8 +283,7 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState(null);
 
-  const [isNewConversationModalOpen, setIsNewConversationModalOpen] =
-    useState(false);
+  const [isNewConversationModalOpen, setIsNewConversationModalOpen] = useState(false);
   const [ephemeralConversations, setEphemeralConversations] = useState({});
 
   // --- WS refs/state ---
@@ -416,7 +376,6 @@ export default function DashboardPage() {
           return;
         }
 
-        // route selection expression is $request.body.action
         ws.send(JSON.stringify({ action: "auth", token: idToken }));
       } catch (e) {
         console.error("[WS] auth send failed:", e);
@@ -431,7 +390,6 @@ export default function DashboardPage() {
         if (payload?.type === "MESSAGE_NEW" && payload?.message) {
           const m = payload.message;
 
-          // Keep raw fields, but normalize a few for safety
           const normalized = {
             ...m,
             body: m.body ?? m.message_content ?? "",
@@ -447,18 +405,15 @@ export default function DashboardPage() {
           };
 
           setMessages((prev) => {
-  const mid = normalized.messageId || null;
-  const fp = messageFingerprint(normalized);
+            const mid = normalized.messageId || null;
+            const fp = messageFingerprint(normalized);
 
-  // If any existing message matches by id OR fingerprint, ignore
-  if (mid && prev.some((x) => (x.messageId || x.id) === mid)) return prev;
-  if (prev.some((x) => messageFingerprint(x) === fp)) return prev;
+            if (mid && prev.some((x) => (x.messageId || x.id) === mid)) return prev;
+            if (prev.some((x) => messageFingerprint(x) === fp)) return prev;
 
-  return [...prev, normalized];
-});
+            return [...prev, normalized];
+          });
 
-
-          // If user is viewing this thread, mark as read immediately
           const incoming = normalized.messageType !== "SENT";
           const threadId = normalized.threadId || payload.threadId;
           if (incoming && threadId && threadId === selectedThreadId) {
@@ -466,7 +421,6 @@ export default function DashboardPage() {
           }
         }
 
-        // THREAD_READ from server (support both shapes + both id formats)
         if (payload?.type === "THREAD_READ" && payload?.threadId) {
           const rawTid = String(payload.threadId);
           const normalizedTid = normalizeThreadIdKey(rawTid);
@@ -601,7 +555,7 @@ export default function DashboardPage() {
     };
   }, [currentUser?.phone_number, refreshThreadReads]);
 
-    const markThreadRead = useCallback(async (threadId, lastMessageTimestamp) => {
+  const markThreadRead = useCallback(async (threadId, lastMessageTimestamp) => {
     if (!threadId) return;
 
     const lastReadAtMs = toEpochMs(lastMessageTimestamp);
@@ -624,7 +578,7 @@ export default function DashboardPage() {
     try {
       await api.post("/threads/read", {
         threadId: rawTid,
-        threadKey: normalizedTid, // harmless extra field; backend can ignore
+        threadKey: normalizedTid,
         lastReadAtMs,
         origin: "web",
       });
@@ -633,20 +587,28 @@ export default function DashboardPage() {
     }
   }, []);
 
+  // ✅ IMMEDIATE WIN: build a fast lookup map once (instead of contacts.find per message)
+  const contactsByPhone = useMemo(() => {
+    const map = new Map();
+    for (const c of Array.isArray(contacts) ? contacts : []) {
+      const k = normalizePhoneNumber(c?.phone_number || "");
+      if (k) map.set(k, c);
+    }
+    return map;
+  }, [contacts]);
 
   // Build conversations from messages + contacts
   const conversations = useMemo(() => {
     if (!Array.isArray(messages) || !currentUser) return {};
 
+    const myRawPhone = currentUser.phone_number || currentUser.phoneNumber || "";
+    const normalizedMe = normalizePhoneNumber(myRawPhone);
+
     return messages.reduce((acc, message) => {
-      const myRawPhone =
-        currentUser.phone_number || currentUser.phoneNumber || "";
-      const normalizedMe = normalizePhoneNumber(myRawPhone);
       const normalizedAddress = normalizePhoneNumber(message.address);
 
       if (!normalizedAddress && !normalizedMe) return acc;
 
-      // Thread id logic (kept as-is per your code)
       let threadId;
       if (normalizedMe) {
         const participants = [normalizedMe, normalizedAddress]
@@ -658,9 +620,8 @@ export default function DashboardPage() {
       }
 
       if (!acc[threadId]) {
-        const contact = contacts.find(
-          (c) => normalizePhoneNumber(c.phone_number) === normalizedAddress
-        );
+        // ✅ O(1) contact lookup now
+        const contact = normalizedAddress ? contactsByPhone.get(normalizedAddress) : null;
 
         acc[threadId] = {
           thread_id: threadId,
@@ -675,13 +636,9 @@ export default function DashboardPage() {
 
       const msgType = (message.messageType || "").toString().toUpperCase();
       const isSent = msgType === "SENT";
-      const timestamp =
-        message.timestamp || message.date || new Date().toISOString();
+      const timestamp = message.timestamp || message.date || new Date().toISOString();
 
-      // MMS support: carry fields through to MessageThread
-      const attachments = Array.isArray(message.attachments)
-        ? message.attachments
-        : [];
+      const attachments = Array.isArray(message.attachments) ? message.attachments : [];
       const kind = message.kind || "";
       const text = message.text || "";
       const isMms =
@@ -699,7 +656,6 @@ export default function DashboardPage() {
         is_sent: isSent,
         sync_status: "synced",
 
-        // NEW: make MMS renderable
         is_mms: isMms,
         kind,
         text,
@@ -708,8 +664,7 @@ export default function DashboardPage() {
         raw: message,
       });
 
-      // UNREAD LOGIC (prefer per-message read flag if present; else fallback to per-thread cursor)
-            // UNREAD LOGIC
+      // UNREAD LOGIC
       const msgMs = toEpochMs(timestamp);
       const isIncoming = !isSent;
 
@@ -723,21 +678,14 @@ export default function DashboardPage() {
       const lastReadAtIso = resolveLastReadIso(threadReads, threadId, message);
       const lastReadMs = lastReadAtIso ? toEpochMs(lastReadAtIso) : 0;
 
-      // Rules:
-      // - If message explicitly says "read: true" -> it's read (never unread)
-      // - If message says "read: false", it can STILL become read if cursor moved past it
-      // - If no read flag, cursor decides
       let isUnread = false;
-
       if (readFlag === true) {
         isUnread = false;
       } else {
-        // readFlag === false OR null -> cursor decides unreadness
         isUnread = isIncoming && msgMs > lastReadMs;
       }
 
       if (isUnread) acc[threadId].unread_count += 1;
-
 
       const existingLast = acc[threadId].last_message;
       const existingMs = existingLast ? toEpochMs(existingLast.timestamp) : 0;
@@ -753,7 +701,7 @@ export default function DashboardPage() {
 
       return acc;
     }, {});
-  }, [messages, contacts, currentUser, threadReads]);
+  }, [messages, contactsByPhone, currentUser, threadReads]);
 
   const allConversations = useMemo(() => {
     const merged = { ...conversations, ...ephemeralConversations };
@@ -769,12 +717,8 @@ export default function DashboardPage() {
   const conversationList = useMemo(() => {
     return Object.values(allConversations)
       .sort((a, b) => {
-        const dateA = a.last_message
-          ? new Date(a.last_message.timestamp)
-          : new Date(0);
-        const dateB = b.last_message
-          ? new Date(b.last_message.timestamp)
-          : new Date(0);
+        const dateA = a.last_message ? new Date(a.last_message.timestamp) : new Date(0);
+        const dateB = b.last_message ? new Date(b.last_message.timestamp) : new Date(0);
         return dateB - dateA;
       })
       .filter((conv) => {
@@ -791,9 +735,7 @@ export default function DashboardPage() {
         }
 
         if (searchQuery) {
-          return conv.display_name
-            ?.toLowerCase()
-            .includes(searchQuery.toLowerCase());
+          return conv.display_name?.toLowerCase().includes(searchQuery.toLowerCase());
         }
         return true;
       });
@@ -845,9 +787,7 @@ export default function DashboardPage() {
     markThreadRead(threadId, lastTs || new Date().toISOString());
   };
 
-  const selectedConversation = selectedThreadId
-    ? allConversations[selectedThreadId]
-    : null;
+  const selectedConversation = selectedThreadId ? allConversations[selectedThreadId] : null;
 
   return (
     <>
@@ -917,17 +857,21 @@ export default function DashboardPage() {
               onMessageSent={(serverItem) => {
                 if (!serverItem) return;
                 setMessages((prev) => {
-  const mid = serverItem.messageId || serverItem.id || null;
-  const candidate = { ...serverItem, messageId: mid };
+                  const mid = serverItem.messageId || serverItem.id || null;
+                  const candidate = { ...serverItem, messageId: mid };
 
-  if (mid && prev.some((x) => (x.messageId || x.id) === mid)) return prev;
+                  if (mid && prev.some((x) => (x.messageId || x.id) === mid)) return prev;
 
-  const fp = messageFingerprint(candidate);
-  if (prev.some((x) => messageFingerprint(x) === fp)) return prev;
+                  const fp = messageFingerprint(candidate);
+                  if (prev.some((x) => messageFingerprint(x) === fp)) return prev;
 
-  return [...prev, candidate];
-});
+                  return [...prev, candidate];
+                });
               }}
+              // Pagination UI hooks (no-op for now; wired for later)
+              onLoadOlder={null}
+              hasMore={false}
+              isLoadingThread={false}
             />
           ) : (
             <div className="flex-1 flex items-center justify-center bg-slate-50">
@@ -943,8 +887,7 @@ export default function DashboardPage() {
                   Select a Conversation
                 </h2>
                 <p className="max-w-sm text-slate-600">
-                  Choose a conversation from the list to view your synced
-                  messages
+                  Choose a conversation from the list to view your synced messages
                 </p>
 
                 <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg max-w-md mx-auto">
