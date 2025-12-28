@@ -17,6 +17,7 @@ import {
   Paperclip,
   Image as ImageIcon,
   ExternalLink,
+  Loader2,
 } from "lucide-react";
 
 const MessageStatusIcon = ({ message }) => {
@@ -245,9 +246,7 @@ function AttachmentList({ message, isSent }) {
                   <Paperclip className="w-3 h-3 shrink-0" />
                   <span className="font-medium truncate">{name}</span>
                   {mime ? (
-                    <span
-                      className={`${isSent ? "text-green-100" : "text-slate-500"} shrink-0`}
-                    >
+                    <span className={`${isSent ? "text-green-100" : "text-slate-500"} shrink-0`}>
                       ({mime})
                     </span>
                   ) : null}
@@ -301,7 +300,18 @@ function AttachmentList({ message, isSent }) {
   );
 }
 
-export default function MessageThread({ conversation, currentUser, onRefresh }) {
+export default function MessageThread({
+  conversation,
+  currentUser,
+  onRefresh,
+  onMarkRead,
+  onMessageSent,
+
+  // ✅ pagination UI hooks (optional)
+  onLoadOlder = null,
+  hasMore = false,
+  isLoadingThread = false,
+}) {
   const [newMessage, setNewMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [localMessages, setLocalMessages] = useState([]);
@@ -315,7 +325,6 @@ export default function MessageThread({ conversation, currentUser, onRefresh }) 
   );
 
   // --- DEDUPE HELPERS (inside component, stable) ---
-  // NOTE: widen bucket slightly so "API echo" and "phone sync" collapse when close in time
   const fingerprintLocal = useCallback(
     (m) => {
       const dir = m?.is_sent ? "S" : "R";
@@ -385,7 +394,6 @@ export default function MessageThread({ conversation, currentUser, onRefresh }) 
         sortedServer.map((m) => m.messageId || m.id || `${m.timestamp}|${m.message_content}`)
       );
 
-      // Keep only pending/error locals; synced locals should be replaced by server/phone truth
       const keepLocal = prev.filter((m) => {
         if (m.sync_status !== "pending" && m.sync_status !== "error") return false;
         const key = m.messageId || m.id || `${m.timestamp}|${m.message_content}`;
@@ -403,6 +411,15 @@ export default function MessageThread({ conversation, currentUser, onRefresh }) 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [localMessages.length]);
+
+  // Optional: if parent wants mark-read on mount/update
+  useEffect(() => {
+    if (!onMarkRead) return;
+    const tid = conversation?.thread_id;
+    if (!tid) return;
+    onMarkRead(tid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversation?.thread_id]);
 
   const handleSendMessage = async (e) => {
     e.preventDefault();
@@ -429,8 +446,6 @@ export default function MessageThread({ conversation, currentUser, onRefresh }) 
     setNewMessage("");
 
     try {
-      // IMPORTANT: do NOT treat API response as a final stored “sent message”.
-      // The phone will create the real SMS record and sync it back; using API response causes duplicates.
       await api.post("/messages", { threadId, body: trimmed });
 
       setLocalMessages((prev) =>
@@ -439,9 +454,8 @@ export default function MessageThread({ conversation, currentUser, onRefresh }) 
         )
       );
 
-      // Optional: if you want, you can refresh after a short delay
-      // (but usually WS/phone sync will bring it in)
-      // onRefresh && onRefresh();
+      // Parent hook (optional)
+      onMessageSent && onMessageSent({ threadId, body: trimmed, timestamp: nowIso });
     } catch (error) {
       console.error("Failed to send message:", error);
       setLocalMessages((prev) =>
@@ -490,16 +504,11 @@ export default function MessageThread({ conversation, currentUser, onRefresh }) 
         <div className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg">
           <div className="flex items-center gap-2">
             <Wifi className="w-4 h-4 text-green-600" />
-            <span className="text-sm font-medium text-green-800">
-              Fig Phone Connected
-            </span>
+            <span className="text-sm font-medium text-green-800">Fig Phone Connected</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-            <Badge
-              variant="outline"
-              className="text-xs bg-green-50 text-green-700 border-green-200"
-            >
+            <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
               Real-time Sync
             </Badge>
           </div>
@@ -508,6 +517,30 @@ export default function MessageThread({ conversation, currentUser, onRefresh }) 
 
       {/* MESSAGES */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white">
+        {/* ✅ Load older / spinner bar */}
+        {(hasMore || isLoadingThread) && (
+          <div className="flex justify-center py-2">
+            {isLoadingThread ? (
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Loading…</span>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="rounded-full"
+                onClick={() => onLoadOlder && onLoadOlder()}
+                disabled={!onLoadOlder}
+                title={!onLoadOlder ? "Pagination not enabled yet" : "Load older messages"}
+              >
+                Load older messages
+              </Button>
+            )}
+          </div>
+        )}
+
         <AnimatePresence>
           {localMessages.map((message, index) => {
             const isSent = !!message.is_sent;
