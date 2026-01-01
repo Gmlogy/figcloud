@@ -20,13 +20,34 @@ import NewConversationModal from "../components/messages/NewConversationModal";
  */
 const WS_URL = "wss://is2qkmtavd.execute-api.us-east-1.amazonaws.com/production";
 
+function unwrapApi(resp) {
+  // supports axios (resp.data) OR your api wrapper that returns data directly
+  return resp?.data ?? resp;
+}
+
 function safeArray(resp) {
-  if (!resp) return [];
-  if (Array.isArray(resp)) return resp;
-  if (Array.isArray(resp?.Items)) return resp.Items;
-  if (Array.isArray(resp?.data)) return resp.data;
-  if (Array.isArray(resp?.data?.Items)) return resp.data.Items;
+  const d = unwrapApi(resp);
+  if (!d) return [];
+  if (Array.isArray(d)) return d;
+  if (Array.isArray(d?.Items)) return d.Items;
+  if (Array.isArray(d?.items)) return d.items;
+  if (Array.isArray(d?.data)) return d.data;
+  if (Array.isArray(d?.data?.Items)) return d.data.Items;
+  if (Array.isArray(d?.data?.items)) return d.data.items;
   return [];
+}
+
+function getNextCursor(resp) {
+  const d = unwrapApi(resp);
+  return (
+    d?.nextCursor ||
+    d?.next_cursor ||
+    d?.cursor ||
+    d?.next ||
+    d?.LastEvaluatedKey ||
+    d?.lastEvaluatedKey ||
+    null
+  );
 }
 
 /**
@@ -263,10 +284,9 @@ function computeDisplayBody(message) {
     const b = body.trim();
     if (b && b !== "[MMS]") return b;
 
-    if (atts.length > 0) {
-      return `[MMS] (${atts.length} attachment${atts.length > 1 ? "s" : ""})`;
-    }
-    return "[MMS]";
+    // ✅ IMPORTANT: don’t force "[MMS]" as last_message text in thread list
+    // return "" so the UI shows the thread but with blank preview if needed
+    return b === "[MMS]" ? "" : b;
   }
 
   return body;
@@ -285,6 +305,9 @@ export default function DashboardPage() {
 
   const [isNewConversationModalOpen, setIsNewConversationModalOpen] = useState(false);
   const [ephemeralConversations, setEphemeralConversations] = useState({});
+
+  // ✅ new: progressive loading status
+  const [messagesLoadInfo, setMessagesLoadInfo] = useState({ loading: false, loaded: 0, error: "" });
 
   // --- WS refs/state ---
   const wsRef = useRef(null);
@@ -462,6 +485,55 @@ export default function DashboardPage() {
     };
   };
 
+  // ✅ NEW: paged /messages fetch
+  const fetchMessagesPaged = useCallback(async () => {
+    const LIMIT = 200;
+    const MAX_PAGES = 200;     // safety
+    const MAX_ITEMS = 20000;   // safety (won’t hit for you)
+
+    let cursor = null;
+    let page = 0;
+    let all = [];
+
+    setMessagesLoadInfo({ loading: true, loaded: 0, error: "" });
+
+    while (page < MAX_PAGES && all.length < MAX_ITEMS) {
+      page += 1;
+
+      let resp;
+      try {
+        resp = await api.get("/messages", {
+          params: {
+            limit: LIMIT,
+            cursor: cursor || undefined,
+          },
+        });
+      } catch (e) {
+        // If your backend doesn't support pagination, break and fallback
+        console.warn("[messages] page fetch failed, will fallback:", e);
+        throw e;
+      }
+
+      const items = safeArray(resp);
+      const next = getNextCursor(resp);
+
+      if (items.length) {
+        all = dedupeMessagesArray([...all, ...items]);
+        setMessages(all); // ✅ show conversations as soon as possible
+        setMessagesLoadInfo({ loading: true, loaded: all.length, error: "" });
+      }
+
+      if (!next || items.length === 0) {
+        break;
+      }
+
+      cursor = typeof next === "string" ? next : JSON.stringify(next);
+    }
+
+    setMessagesLoadInfo({ loading: false, loaded: all.length, error: "" });
+    return all;
+  }, []);
+
   const loadInitialData = async () => {
     setIsLoading(true);
     try {
@@ -475,15 +547,7 @@ export default function DashboardPage() {
       };
       setCurrentUser(user);
 
-      let messagesArray = [];
-      try {
-        const fetchedMessages = await api.get("/messages");
-        messagesArray = safeArray(fetchedMessages);
-      } catch (err) {
-        console.error("Error fetching /messages:", err);
-        messagesArray = [];
-      }
-
+      // ---- contacts ----
       let contactsArray = [];
       try {
         const fetchedContacts = await api.get("/contacts");
@@ -493,6 +557,7 @@ export default function DashboardPage() {
         contactsArray = [];
       }
 
+      // ---- reads ----
       let readsArray = [];
       try {
         const fetchedReads = await api.get("/threads/read");
@@ -502,18 +567,38 @@ export default function DashboardPage() {
         readsArray = [];
       }
 
-      setMessages(dedupeMessagesArray(messagesArray));
       setContacts(
-        contactsArray.sort((a, b) =>
-          (a.full_name || "").localeCompare(b.full_name || "")
-        )
+        contactsArray.sort((a, b) => (a.full_name || "").localeCompare(b.full_name || ""))
       );
       setThreadReads(extractLastReadMap(readsArray));
+
+      // ---- messages (paged first, fallback to plain) ----
+      try {
+        await fetchMessagesPaged();
+      } catch (err) {
+        console.error("Error fetching /messages paged (fallback to plain):", err);
+        setMessagesLoadInfo((prev) => ({
+          ...prev,
+          error: "Messages download failed (payload too large). Using fallback…",
+        }));
+
+        try {
+          const fetchedMessages = await api.get("/messages");
+          const messagesArray = safeArray(fetchedMessages);
+          setMessages(dedupeMessagesArray(messagesArray));
+          setMessagesLoadInfo({ loading: false, loaded: messagesArray.length, error: "" });
+        } catch (e2) {
+          console.error("Error fetching /messages fallback:", e2);
+          setMessages([]);
+          setMessagesLoadInfo({ loading: false, loaded: 0, error: "Messages failed to load." });
+        }
+      }
     } catch (error) {
       console.error("Error in loadInitialData wrapper:", error);
       setMessages([]);
       setContacts([]);
       setThreadReads({});
+      setMessagesLoadInfo({ loading: false, loaded: 0, error: "Failed to load initial data." });
     } finally {
       setIsLoading(false);
     }
@@ -611,16 +696,13 @@ export default function DashboardPage() {
 
       let threadId;
       if (normalizedMe) {
-        const participants = [normalizedMe, normalizedAddress]
-          .filter(Boolean)
-          .sort();
+        const participants = [normalizedMe, normalizedAddress].filter(Boolean).sort();
         threadId = participants.join("_");
       } else {
         threadId = normalizedAddress || message.address || "unknown";
       }
 
       if (!acc[threadId]) {
-        // ✅ O(1) contact lookup now
         const contact = normalizedAddress ? contactsByPhone.get(normalizedAddress) : null;
 
         acc[threadId] = {
@@ -641,10 +723,7 @@ export default function DashboardPage() {
       const attachments = Array.isArray(message.attachments) ? message.attachments : [];
       const kind = message.kind || "";
       const text = message.text || "";
-      const isMms =
-        String(kind).toLowerCase() === "mms" ||
-        attachments.length > 0 ||
-        message.msg_box != null;
+      const isMms = String(kind).toLowerCase() === "mms" || attachments.length > 0 || message.msg_box != null;
 
       const displayBody = computeDisplayBody(message);
 
@@ -822,6 +901,18 @@ export default function DashboardPage() {
                 className="pl-10 rounded-full border-slate-200 h-12 bg-slate-50 focus:bg-white"
               />
             </div>
+
+            {/* ✅ show message loading info */}
+            {(messagesLoadInfo.loading || messagesLoadInfo.error) && (
+              <div className="mt-3 text-xs text-slate-500">
+                {messagesLoadInfo.loading ? (
+                  <div>Loading messages… ({messagesLoadInfo.loaded} loaded)</div>
+                ) : null}
+                {messagesLoadInfo.error ? (
+                  <div className="text-amber-600">{messagesLoadInfo.error}</div>
+                ) : null}
+              </div>
+            )}
           </div>
 
           <SecurityBanner currentUser={currentUser} />
@@ -868,7 +959,6 @@ export default function DashboardPage() {
                   return [...prev, candidate];
                 });
               }}
-              // Pagination UI hooks (no-op for now; wired for later)
               onLoadOlder={null}
               hasMore={false}
               isLoadingThread={false}
@@ -889,18 +979,6 @@ export default function DashboardPage() {
                 <p className="max-w-sm text-slate-600">
                   Choose a conversation from the list to view your synced messages
                 </p>
-
-                <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg max-w-md mx-auto">
-                  <div className="flex items-center justify-center gap-2 mb-2">
-                    <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-                    <span className="text-sm font-medium text-green-800">
-                      Real-time connected
-                    </span>
-                  </div>
-                  <p className="text-xs text-green-600">
-                    Messages update instantly • Keep your phone connected.
-                  </p>
-                </div>
               </motion.div>
             </div>
           )}
