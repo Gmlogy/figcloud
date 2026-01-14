@@ -20,6 +20,26 @@ import {
   Loader2,
 } from "lucide-react";
 
+function digitsOnly(x) {
+  return String(x || "").replace(/\D/g, "");
+}
+
+function canonicalPhoneKey(raw) {
+  let d = digitsOnly(raw);
+  if (!d) return "";
+  if (d.startsWith("00")) d = d.slice(2);
+
+  // Morocco
+  if (d.length === 12 && d.startsWith("212")) return d.slice(-9);
+  if (d.length === 10 && d.startsWith("0")) return d.slice(1);
+
+  // US
+  if (d.length === 11 && d.startsWith("1")) return d.slice(1);
+
+  if (d.length > 10) return d.slice(-10);
+  return d;
+}
+
 const MessageStatusIcon = ({ message }) => {
   if (!message.is_sent) return null;
 
@@ -101,11 +121,6 @@ function isImageMime(mime) {
   return typeof mime === "string" && mime.toLowerCase().startsWith("image/");
 }
 
-/**
- * IMPORTANT CHANGE:
- * - For MMS, we do NOT show "[MMS] (x attachments)" at all.
- * - We only show actual text content if present.
- */
 function getDisplayTextWithoutMmsPlaceholder(message) {
   const m = message || {};
   const raw = m.raw || {};
@@ -130,13 +145,6 @@ function getDisplayTextWithoutMmsPlaceholder(message) {
   return "";
 }
 
-/**
- * AttachmentList:
- * - AUTO resolves signed URL for each attachment with s3Key
- * - AUTO previews images inline as soon as URL is available
- * - Provides Open button (opens in new tab)
- * - Retries once if image fails to load (URL can expire)
- */
 function AttachmentList({ message, isSent }) {
   const atts = normalizeAttachments(message);
 
@@ -261,7 +269,9 @@ function AttachmentList({ message, isSent }) {
                 type="button"
                 size="icon"
                 variant="ghost"
-                className={`h-8 w-8 rounded-full ${isSent ? "hover:bg-white/10" : "hover:bg-slate-100"}`}
+                className={`h-8 w-8 rounded-full ${
+                  isSent ? "hover:bg-white/10" : "hover:bg-slate-100"
+                }`}
                 disabled={!canOpen}
                 onClick={() => openAttachment(a)}
                 title={canOpen ? "Open" : "Loading"}
@@ -307,7 +317,6 @@ export default function MessageThread({
   onMarkRead,
   onMessageSent,
 
-  // ✅ pagination UI hooks (optional)
   onLoadOlder = null,
   hasMore = false,
   isLoadingThread = false,
@@ -324,7 +333,6 @@ export default function MessageThread({
     [conversation?.phone_number, conversation?.phoneNumber]
   );
 
-  // --- DEDUPE HELPERS (inside component, stable) ---
   const fingerprintLocal = useCallback(
     (m) => {
       const dir = m?.is_sent ? "S" : "R";
@@ -339,7 +347,7 @@ export default function MessageThread({
 
       const ts = m?.timestamp || Date.now();
       const tsMs = new Date(ts).getTime();
-      const bucket = Math.floor((Number.isFinite(tsMs) ? tsMs : Date.now()) / 10_000); // 10s bucket
+      const bucket = Math.floor((Number.isFinite(tsMs) ? tsMs : Date.now()) / 10_000);
 
       return `${dir}|${otherNumber}|${body}|${attSig}|${bucket}`;
     },
@@ -373,18 +381,24 @@ export default function MessageThread({
     [fingerprintLocal]
   );
 
+  /**
+   * ✅ IMPORTANT: threadId must match Dashboard logic
+   * or you’ll re-introduce duplicates when sending.
+   */
   const getCanonicalThreadId = () => {
-    const me = currentUser?.phone_number || currentUser?.phoneNumber;
-    const other = conversation.phone_number;
+    const meRaw = currentUser?.phone_number || currentUser?.phoneNumber || "";
+    const otherRaw = conversation?.phone_number || conversation?.phoneNumber || "";
 
-    if (me && other) {
-      const [a, b] = [me, other].sort();
+    const meKey = canonicalPhoneKey(meRaw) || digitsOnly(meRaw) || String(meRaw || "");
+    const otherKey = canonicalPhoneKey(otherRaw) || digitsOnly(otherRaw) || String(otherRaw || "");
+
+    if (meKey && otherKey) {
+      const [a, b] = [meKey, otherKey].sort();
       return `${a}_${b}`;
     }
     return conversation.thread_id;
   };
 
-  // Merge server messages into local view + dedupe
   useEffect(() => {
     const server = Array.isArray(conversation?.messages) ? conversation.messages : [];
     const sortedServer = [...server].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
@@ -412,7 +426,6 @@ export default function MessageThread({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [localMessages.length]);
 
-  // Optional: if parent wants mark-read on mount/update
   useEffect(() => {
     if (!onMarkRead) return;
     const tid = conversation?.thread_id;
@@ -426,7 +439,8 @@ export default function MessageThread({
     const trimmed = newMessage.trim();
     if (!trimmed || isSending) return;
 
-    const threadId = getCanonicalThreadId();
+    const threadId = conversation?.thread_id; // ✅ always send to the currently-open thread
+
     const nowIso = new Date().toISOString();
 
     const tempId = `temp-${Date.now()}`;
@@ -446,7 +460,11 @@ export default function MessageThread({
     setNewMessage("");
 
     try {
-      await api.post("/messages", { threadId, body: trimmed });
+      await api.post("/messages", {
+  threadId,
+  body: trimmed,
+  to: conversation?.phone_number || conversation?.phoneNumber || "", // backend can ignore if not needed
+});
 
       setLocalMessages((prev) =>
         dedupeLocalMessages(
@@ -454,8 +472,16 @@ export default function MessageThread({
         )
       );
 
-      // Parent hook (optional)
-      onMessageSent && onMessageSent({ threadId, body: trimmed, timestamp: nowIso });
+      onMessageSent &&
+  onMessageSent({
+    threadId,
+    address: conversation?.phone_number || conversation?.phoneNumber || "",
+    messageType: "SENT",
+    body: trimmed,
+    timestamp: nowIso,
+    attachments: [],
+    kind: "",
+  });
     } catch (error) {
       console.error("Failed to send message:", error);
       setLocalMessages((prev) =>
@@ -469,7 +495,6 @@ export default function MessageThread({
 
   return (
     <div className="flex flex-col h-full">
-      {/* HEADER */}
       <div className="border-b p-4 bg-white">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
@@ -515,9 +540,7 @@ export default function MessageThread({
         </div>
       </div>
 
-      {/* MESSAGES */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white">
-        {/* ✅ Load older / spinner bar */}
         {(hasMore || isLoadingThread) && (
           <div className="flex justify-center py-2">
             {isLoadingThread ? (
@@ -594,7 +617,6 @@ export default function MessageThread({
         )}
       </div>
 
-      {/* INPUT */}
       <div className="border-t p-4 bg-white">
         <form onSubmit={handleSendMessage} className="flex items-center gap-3">
           <Input
