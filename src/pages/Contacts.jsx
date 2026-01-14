@@ -14,14 +14,21 @@ import {
   MoreVertical,
   CheckSquare,
   Link2,
-  Unlink
+  Unlink,
+  Download,
+  Upload,
 } from "lucide-react";
 import { format } from "date-fns";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
 import ContactsActionsToolbar from "../components/contacts/ContactsActionsToolbar";
 
+// ✅ shadcn/ui toast
+import { useToast } from "@/components/ui/use-toast";
+
 export default function ContactsPage() {
+  const { toast } = useToast();
+
   const [contacts, setContacts] = useState([]);
   const [filteredContacts, setFilteredContacts] = useState({});
   const [searchQuery, setSearchQuery] = useState("");
@@ -31,14 +38,16 @@ export default function ContactsPage() {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedContacts, setSelectedContacts] = useState(new Set());
 
-  // --- NEW: Google integration UI state ---
+  // --- Google integration UI state ---
   const [googleStatus, setGoogleStatus] = useState({
     linked: false,
-    lastGoogleSyncAt: null,
-    linkedAt: null
+    lastGoogleSyncAt: null, // pull timestamp (Google -> Figcloud)
+    lastGooglePushAt: null, // push timestamp (Figcloud -> Google)
+    linkedAt: null,
   });
   const [isGoogleLoading, setIsGoogleLoading] = useState(true);
-  const [isGoogleSyncing, setIsGoogleSyncing] = useState(false);
+  const [isGooglePulling, setIsGooglePulling] = useState(false); // Sync FROM Google
+  const [isGooglePushing, setIsGooglePushing] = useState(false); // Sync TO Google
   const [isGoogleConnecting, setIsGoogleConnecting] = useState(false);
   const [isGoogleDisconnecting, setIsGoogleDisconnecting] = useState(false);
 
@@ -53,10 +62,8 @@ export default function ContactsPage() {
   }, []);
 
   useEffect(() => {
-    // Initial load
     (async () => {
       await Promise.all([loadContacts(), loadGoogleStatus()]);
-      // If user returned from OAuth callback, refresh again and clean URL
       if (googleLinkedQueryFlag) {
         await Promise.all([loadContacts(), loadGoogleStatus()]);
         try {
@@ -83,12 +90,17 @@ export default function ContactsPage() {
       setGoogleStatus({
         linked: !!res?.linked,
         lastGoogleSyncAt: res?.lastGoogleSyncAt || null,
-        linkedAt: res?.linkedAt || null
+        lastGooglePushAt: res?.lastGooglePushAt || null,
+        linkedAt: res?.linkedAt || null,
       });
     } catch (error) {
       console.error("Failed to load Google integration status:", error);
-      // Keep UI usable even if this fails
-      setGoogleStatus({ linked: false, lastGoogleSyncAt: null, linkedAt: null });
+      setGoogleStatus({
+        linked: false,
+        lastGoogleSyncAt: null,
+        lastGooglePushAt: null,
+        linkedAt: null,
+      });
     } finally {
       setIsGoogleLoading(false);
     }
@@ -98,10 +110,17 @@ export default function ContactsPage() {
     if (!isRefreshing) setIsLoading(true);
     try {
       const fetchedContacts = await api.get("/contacts");
-      fetchedContacts.sort((a, b) => (a.full_name || "").localeCompare(b.full_name || ""));
+      fetchedContacts.sort((a, b) =>
+        (a.full_name || "").localeCompare(b.full_name || "")
+      );
       setContacts(fetchedContacts);
     } catch (error) {
       console.error("Failed to load contacts:", error);
+      toast({
+        variant: "destructive",
+        title: "Failed to load contacts",
+        description: error?.message || "Please try again.",
+      });
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -133,9 +152,11 @@ export default function ContactsPage() {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await loadContacts();
-    // optional: also refresh Google status so badge stays accurate
-    await loadGoogleStatus();
+    await Promise.all([loadContacts(), loadGoogleStatus()]);
+    toast({
+      title: "Refreshed ✅",
+      description: "Contacts and Google status updated.",
+    });
   };
 
   const getContactInitials = (name) => {
@@ -196,7 +217,9 @@ export default function ContactsPage() {
 
   const handleExportVCF = () => {
     let vcfContent = "";
-    const contactsToExport = contacts.filter((contact) => selectedContacts.has(contact.contactId));
+    const contactsToExport = contacts.filter((contact) =>
+      selectedContacts.has(contact.contactId)
+    );
 
     contactsToExport.forEach((contact) => {
       vcfContent += "BEGIN:VCARD\n";
@@ -208,28 +231,40 @@ export default function ContactsPage() {
       if (contact.job_title) vcfContent += `TITLE:${contact.job_title}\n`;
       vcfContent += "END:VCARD\n";
     });
+
     createDownload("contacts.vcf", vcfContent, "text/vcard");
+    toast({
+      title: "Exported VCF ✅",
+      description: `${contactsToExport.length} contact(s) exported.`,
+    });
   };
 
   const handleExportCSV = () => {
     const headers = "Full Name,Phone Number,Email,Company,Job Title";
     const csvRows = [headers];
-    const contactsToExport = contacts.filter((contact) => selectedContacts.has(contact.contactId));
+    const contactsToExport = contacts.filter((contact) =>
+      selectedContacts.has(contact.contactId)
+    );
 
     contactsToExport.forEach((contact) => {
       const row = [
         `"${contact.full_name ? contact.full_name.replace(/"/g, '""') : ""}"`,
-        `"${contact.phone_number ? contact.phone_number.replace(/"/g, '""') : ""}"`,
+        `"${contact.phone_number ? String(contact.phone_number).replace(/"/g, '""') : ""}"`,
         `"${contact.email ? contact.email.replace(/"/g, '""') : ""}"`,
         `"${contact.company ? contact.company.replace(/"/g, '""') : ""}"`,
-        `"${contact.job_title ? contact.job_title.replace(/"/g, '""') : ""}"`
+        `"${contact.job_title ? contact.job_title.replace(/"/g, '""') : ""}"`,
       ].join(",");
       csvRows.push(row);
     });
+
     createDownload("contacts.csv", csvRows.join("\n"), "text/csv");
+    toast({
+      title: "Exported CSV ✅",
+      description: `${contactsToExport.length} contact(s) exported.`,
+    });
   };
 
-  // --- NEW: Google connect/sync/disconnect handlers ---
+  // --- Google connect/sync/disconnect handlers ---
 
   const handleGoogleConnect = async () => {
     setIsGoogleConnecting(true);
@@ -239,20 +274,72 @@ export default function ContactsPage() {
       window.location.href = res.authUrl;
     } catch (e) {
       console.error("Google connect failed:", e);
+      toast({
+        variant: "destructive",
+        title: "Google link failed",
+        description: e?.message || "Could not start Google linking flow.",
+      });
     } finally {
       setIsGoogleConnecting(false);
     }
   };
 
-  const handleGoogleSyncNow = async () => {
-    setIsGoogleSyncing(true);
+  // ✅ Sync FROM Google -> Figcloud (pull)
+  const handleGooglePullNow = async () => {
+    setIsGooglePulling(true);
     try {
       await api.post("/integrations/google/sync-now", {});
       await Promise.all([loadGoogleStatus(), loadContacts()]);
+
+      toast({
+        title: "Synced from Google ✅",
+        description: "Imported your Google contacts into Figcloud.",
+      });
     } catch (e) {
-      console.error("Google sync-now failed:", e);
+      console.error("Google pull (sync-now) failed:", e);
+      toast({
+        variant: "destructive",
+        title: "Google sync failed",
+        description: e?.message || "Could not sync contacts from Google.",
+      });
     } finally {
-      setIsGoogleSyncing(false);
+      setIsGooglePulling(false);
+    }
+  };
+
+  // ✅ Sync TO Google (push Figcloud -> Google)
+  const handleGooglePushNow = async () => {
+    setIsGooglePushing(true);
+    try {
+      const res = await api.post("/integrations/google/push-now", {});
+      await Promise.all([loadGoogleStatus(), loadContacts()]);
+
+      const created = res?.created ?? null;
+      const updated = res?.updated ?? null;
+      const failed = res?.failed ?? null;
+      const pushed = res?.pushedThisRun ?? res?.total ?? null;
+
+      const parts = [];
+      if (pushed != null) parts.push(`Pushed: ${pushed}`);
+      if (created != null) parts.push(`Created: ${created}`);
+      if (updated != null) parts.push(`Updated: ${updated}`);
+      if (failed != null) parts.push(`Failed: ${failed}`);
+
+      toast({
+        title: "Synced to Google ✅",
+        description: parts.length
+          ? parts.join(" · ")
+          : "Exported your Figcloud contacts to Google.",
+      });
+    } catch (e) {
+      console.error("Google push (push-now) failed:", e);
+      toast({
+        variant: "destructive",
+        title: "Google sync failed",
+        description: e?.message || "Could not sync contacts to Google.",
+      });
+    } finally {
+      setIsGooglePushing(false);
     }
   };
 
@@ -261,25 +348,40 @@ export default function ContactsPage() {
     try {
       await api.post("/integrations/google/disconnect", {});
       await Promise.all([loadGoogleStatus(), loadContacts()]);
+
+      toast({
+        title: "Google disconnected",
+        description: "Your Google account is no longer linked.",
+      });
     } catch (e) {
       console.error("Google disconnect failed:", e);
+      toast({
+        variant: "destructive",
+        title: "Disconnect failed",
+        description: e?.message || "Could not disconnect Google.",
+      });
     } finally {
       setIsGoogleDisconnecting(false);
     }
   };
 
-  // Badge label
+  // Badge label: show last pull/push if available
   const googleBadge = useMemo(() => {
     if (isGoogleLoading) return "Google: checking…";
     if (!googleStatus.linked) return "Google: not linked";
+
+    const parts = ["Google: linked"];
     if (googleStatus.lastGoogleSyncAt) {
       try {
-        return `Google: linked · ${format(new Date(googleStatus.lastGoogleSyncAt), "PPp")}`;
-      } catch {
-        return "Google: linked";
-      }
+        parts.push(`↓ ${format(new Date(googleStatus.lastGoogleSyncAt), "PPp")}`);
+      } catch {}
     }
-    return "Google: linked";
+    if (googleStatus.lastGooglePushAt) {
+      try {
+        parts.push(`↑ ${format(new Date(googleStatus.lastGooglePushAt), "PPp")}`);
+      } catch {}
+    }
+    return parts.join(" · ");
   }, [googleStatus, isGoogleLoading]);
 
   if (isLoading) {
@@ -310,29 +412,47 @@ export default function ContactsPage() {
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-3">
                 <h1 className="text-xl font-medium text-slate-900">Contacts</h1>
-                <Badge variant={googleStatus.linked ? "secondary" : "outline"} className="hidden sm:inline-flex">
+                <Badge
+                  variant={googleStatus.linked ? "secondary" : "outline"}
+                  className="hidden sm:inline-flex"
+                >
                   {googleBadge}
                 </Badge>
               </div>
 
               <div className="flex items-center gap-2">
-                {/* Google connect/sync controls */}
                 {googleStatus.linked ? (
                   <>
                     <Button
                       variant="ghost"
-                      onClick={handleGoogleSyncNow}
-                      disabled={isGoogleSyncing}
+                      onClick={handleGooglePullNow}
+                      disabled={isGooglePulling || isGooglePushing || isGoogleDisconnecting}
                       className="rounded-full hidden sm:inline-flex"
+                      title="Import contacts from Google into Figcloud"
                     >
-                      <RefreshCw className={`w-4 h-4 mr-2 ${isGoogleSyncing ? "animate-spin" : ""}`} />
-                      Sync Google
+                      <Download
+                        className={`w-4 h-4 mr-2 ${isGooglePulling ? "animate-pulse" : ""}`}
+                      />
+                      Sync from Google
+                    </Button>
+
+                    <Button
+                      variant="ghost"
+                      onClick={handleGooglePushNow}
+                      disabled={isGooglePushing || isGooglePulling || isGoogleDisconnecting}
+                      className="rounded-full hidden sm:inline-flex"
+                      title="Export Figcloud contacts to Google"
+                    >
+                      <Upload
+                        className={`w-4 h-4 mr-2 ${isGooglePushing ? "animate-pulse" : ""}`}
+                      />
+                      Sync to Google
                     </Button>
 
                     <Button
                       variant="ghost"
                       onClick={handleGoogleDisconnect}
-                      disabled={isGoogleDisconnecting}
+                      disabled={isGoogleDisconnecting || isGooglePulling || isGooglePushing}
                       className="rounded-full hidden sm:inline-flex"
                     >
                       <Unlink className="w-4 h-4 mr-2" />
@@ -351,7 +471,6 @@ export default function ContactsPage() {
                   </Button>
                 )}
 
-                {/* Icon-only fallbacks for small screens */}
                 {!googleStatus.linked ? (
                   <Button
                     variant="ghost"
@@ -369,19 +488,32 @@ export default function ContactsPage() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={handleGoogleSyncNow}
-                      disabled={isGoogleSyncing}
+                      onClick={handleGooglePullNow}
+                      disabled={isGooglePulling || isGooglePushing || isGoogleDisconnecting}
                       className="rounded-full sm:hidden"
-                      aria-label="Sync Google"
-                      title="Sync Google"
+                      aria-label="Sync from Google"
+                      title="Sync from Google"
                     >
-                      <RefreshCw className={`w-5 h-5 ${isGoogleSyncing ? "animate-spin" : ""}`} />
+                      <Download className={`w-5 h-5 ${isGooglePulling ? "animate-pulse" : ""}`} />
                     </Button>
+
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleGooglePushNow}
+                      disabled={isGooglePushing || isGooglePulling || isGoogleDisconnecting}
+                      className="rounded-full sm:hidden"
+                      aria-label="Sync to Google"
+                      title="Sync to Google"
+                    >
+                      <Upload className={`w-5 h-5 ${isGooglePushing ? "animate-pulse" : ""}`} />
+                    </Button>
+
                     <Button
                       variant="ghost"
                       size="icon"
                       onClick={handleGoogleDisconnect}
-                      disabled={isGoogleDisconnecting}
+                      disabled={isGoogleDisconnecting || isGooglePulling || isGooglePushing}
                       className="rounded-full sm:hidden"
                       aria-label="Disconnect Google"
                       title="Disconnect Google"
@@ -391,7 +523,12 @@ export default function ContactsPage() {
                   </>
                 )}
 
-                <Button variant="ghost" size="icon" onClick={toggleSelectionMode} className="rounded-full">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={toggleSelectionMode}
+                  className="rounded-full"
+                >
                   <CheckSquare className="w-5 h-5" />
                 </Button>
 
@@ -441,7 +578,9 @@ export default function ContactsPage() {
               {searchQuery ? "No contacts found" : "No contacts synced"}
             </h3>
             <p className="text-slate-500 text-center max-w-md">
-              {searchQuery ? "Try a different search term" : "Contacts will appear here once synced from your devices"}
+              {searchQuery
+                ? "Try a different search term"
+                : "Contacts will appear here once synced from your devices"}
             </p>
           </div>
         ) : (
@@ -488,7 +627,9 @@ export default function ContactsPage() {
                       </div>
 
                       <div className="flex-1 min-w-0">
-                        <h3 className="font-medium text-slate-900 truncate">{contact.full_name || "No Name"}</h3>
+                        <h3 className="font-medium text-slate-900 truncate">
+                          {contact.full_name || "No Name"}
+                        </h3>
 
                         <div className="flex items-center gap-3 mt-1">
                           {contact.phone_number && (
@@ -509,7 +650,9 @@ export default function ContactsPage() {
                           <div className="flex items-center gap-1 text-xs text-slate-500 mt-1">
                             <Building className="w-3 h-3" />
                             <span className="truncate">
-                              {contact.job_title ? `${contact.job_title} at ${contact.company}` : contact.company}
+                              {contact.job_title
+                                ? `${contact.job_title} at ${contact.company}`
+                                : contact.company}
                             </span>
                           </div>
                         )}
