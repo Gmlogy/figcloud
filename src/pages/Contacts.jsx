@@ -1,46 +1,107 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Search, Phone, Mail, Building, RefreshCw, Users, Smartphone, MoreVertical, CheckSquare } from "lucide-react";
+import {
+  Search,
+  Phone,
+  Mail,
+  Building,
+  RefreshCw,
+  Users,
+  MoreVertical,
+  CheckSquare,
+  Link2,
+  Unlink
+} from "lucide-react";
 import { format } from "date-fns";
 import { motion } from "framer-motion";
-import { api } from '@/lib/api'; // Import your api helper
+import { api } from "@/lib/api";
 import ContactsActionsToolbar from "../components/contacts/ContactsActionsToolbar";
 
 export default function ContactsPage() {
   const [contacts, setContacts] = useState([]);
-  const [filteredContacts, setFilteredContacts] = useState([]);
+  const [filteredContacts, setFilteredContacts] = useState({});
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedContacts, setSelectedContacts] = useState(new Set());
-  const [currentUser, setCurrentUser] = useState(null);
+
+  // --- NEW: Google integration UI state ---
+  const [googleStatus, setGoogleStatus] = useState({
+    linked: false,
+    lastGoogleSyncAt: null,
+    linkedAt: null
+  });
+  const [isGoogleLoading, setIsGoogleLoading] = useState(true);
+  const [isGoogleSyncing, setIsGoogleSyncing] = useState(false);
+  const [isGoogleConnecting, setIsGoogleConnecting] = useState(false);
+  const [isGoogleDisconnecting, setIsGoogleDisconnecting] = useState(false);
+
+  // If user comes back from callback like /contacts?google=linked
+  const googleLinkedQueryFlag = useMemo(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("google") === "linked";
+    } catch {
+      return false;
+    }
+  }, []);
 
   useEffect(() => {
-    loadContacts();
+    // Initial load
+    (async () => {
+      await Promise.all([loadContacts(), loadGoogleStatus()]);
+      // If user returned from OAuth callback, refresh again and clean URL
+      if (googleLinkedQueryFlag) {
+        await Promise.all([loadContacts(), loadGoogleStatus()]);
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("google");
+          window.history.replaceState({}, "", url.toString());
+        } catch {
+          // ignore
+        }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     filterContacts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contacts, searchQuery]);
 
-  const loadContacts = async () => {
-    // We don't want to show the loading spinner on a manual refresh
-    if (!isRefreshing) {
-      setIsLoading(true);
-    }
+  const loadGoogleStatus = async () => {
+    setIsGoogleLoading(true);
     try {
-      const fetchedContacts = await api.get('/contacts');
-      // Sort contacts alphabetically by full_name
-      fetchedContacts.sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''));
+      const res = await api.get("/integrations/google/status");
+      setGoogleStatus({
+        linked: !!res?.linked,
+        lastGoogleSyncAt: res?.lastGoogleSyncAt || null,
+        linkedAt: res?.linkedAt || null
+      });
+    } catch (error) {
+      console.error("Failed to load Google integration status:", error);
+      // Keep UI usable even if this fails
+      setGoogleStatus({ linked: false, lastGoogleSyncAt: null, linkedAt: null });
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
+
+  const loadContacts = async () => {
+    if (!isRefreshing) setIsLoading(true);
+    try {
+      const fetchedContacts = await api.get("/contacts");
+      fetchedContacts.sort((a, b) => (a.full_name || "").localeCompare(b.full_name || ""));
       setContacts(fetchedContacts);
     } catch (error) {
       console.error("Failed to load contacts:", error);
-      // In a real app, you would show an error toast here
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -49,35 +110,43 @@ export default function ContactsPage() {
 
   const filterContacts = () => {
     let filtered = contacts;
-    
+
     if (searchQuery) {
-      filtered = contacts.filter(contact =>
-        contact.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        contact.phone_number?.includes(searchQuery) ||
-        contact.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        contact.company?.toLowerCase().includes(searchQuery.toLowerCase())
+      filtered = contacts.filter(
+        (contact) =>
+          contact.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          contact.phone_number?.includes(searchQuery) ||
+          contact.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          contact.company?.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
-    
+
     const grouped = filtered.reduce((acc, contact) => {
-      const firstLetter = contact.full_name?.[0]?.toUpperCase() || '#';
-      if (!acc[firstLetter]) {
-        acc[firstLetter] = [];
-      }
+      const firstLetter = contact.full_name?.[0]?.toUpperCase() || "#";
+      if (!acc[firstLetter]) acc[firstLetter] = [];
       acc[firstLetter].push(contact);
       return acc;
     }, {});
-    
+
     setFilteredContacts(grouped);
   };
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
     await loadContacts();
+    // optional: also refresh Google status so badge stays accurate
+    await loadGoogleStatus();
   };
 
   const getContactInitials = (name) => {
-    return name ? name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : '??';
+    return name
+      ? name
+          .split(" ")
+          .map((n) => n[0])
+          .join("")
+          .toUpperCase()
+          .slice(0, 2)
+      : "??";
   };
 
   const toggleSelectionMode = () => {
@@ -87,18 +156,15 @@ export default function ContactsPage() {
 
   const handleContactClick = (contactId) => {
     const newSelection = new Set(selectedContacts);
-    if (newSelection.has(contactId)) {
-      newSelection.delete(contactId);
-    } else {
-      newSelection.add(contactId);
-    }
+    if (newSelection.has(contactId)) newSelection.delete(contactId);
+    else newSelection.add(contactId);
     setSelectedContacts(newSelection);
   };
-  
+
   const getVisibleContactIds = () => {
     const ids = [];
-    Object.values(filteredContacts).forEach(group => {
-      group.forEach(contact => ids.push(contact.contactId));
+    Object.values(filteredContacts).forEach((group) => {
+      group.forEach((contact) => ids.push(contact.contactId));
     });
     return ids;
   };
@@ -116,10 +182,10 @@ export default function ContactsPage() {
     setSelectedContacts(new Set());
     setIsSelectionMode(false);
   };
-  
+
   const createDownload = (filename, content, type) => {
     const blob = new Blob([content], { type });
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
     link.download = filename;
     document.body.appendChild(link);
@@ -130,9 +196,9 @@ export default function ContactsPage() {
 
   const handleExportVCF = () => {
     let vcfContent = "";
-    const contactsToExport = contacts.filter(contact => selectedContacts.has(contact.contactId));
+    const contactsToExport = contacts.filter((contact) => selectedContacts.has(contact.contactId));
 
-    contactsToExport.forEach(contact => {
+    contactsToExport.forEach((contact) => {
       vcfContent += "BEGIN:VCARD\n";
       vcfContent += "VERSION:3.0\n";
       vcfContent += `FN:${contact.full_name}\n`;
@@ -147,21 +213,74 @@ export default function ContactsPage() {
 
   const handleExportCSV = () => {
     const headers = "Full Name,Phone Number,Email,Company,Job Title";
-    let csvRows = [headers];
-    const contactsToExport = contacts.filter(contact => selectedContacts.has(contact.contactId));
+    const csvRows = [headers];
+    const contactsToExport = contacts.filter((contact) => selectedContacts.has(contact.contactId));
 
-    contactsToExport.forEach(contact => {
+    contactsToExport.forEach((contact) => {
       const row = [
-        `"${contact.full_name ? contact.full_name.replace(/"/g, '""') : ''}"`,
-        `"${contact.phone_number ? contact.phone_number.replace(/"/g, '""') : ''}"`,
-        `"${contact.email ? contact.email.replace(/"/g, '""') : ''}"`,
-        `"${contact.company ? contact.company.replace(/"/g, '""') : ''}"`,
-        `"${contact.job_title ? contact.job_title.replace(/"/g, '""') : ''}"`
-      ].join(',');
+        `"${contact.full_name ? contact.full_name.replace(/"/g, '""') : ""}"`,
+        `"${contact.phone_number ? contact.phone_number.replace(/"/g, '""') : ""}"`,
+        `"${contact.email ? contact.email.replace(/"/g, '""') : ""}"`,
+        `"${contact.company ? contact.company.replace(/"/g, '""') : ""}"`,
+        `"${contact.job_title ? contact.job_title.replace(/"/g, '""') : ""}"`
+      ].join(",");
       csvRows.push(row);
     });
-    createDownload("contacts.csv", csvRows.join('\n'), "text/csv");
+    createDownload("contacts.csv", csvRows.join("\n"), "text/csv");
   };
+
+  // --- NEW: Google connect/sync/disconnect handlers ---
+
+  const handleGoogleConnect = async () => {
+    setIsGoogleConnecting(true);
+    try {
+      const res = await api.post("/integrations/google/connect", {});
+      if (!res?.authUrl) throw new Error("Missing authUrl from backend.");
+      window.location.href = res.authUrl;
+    } catch (e) {
+      console.error("Google connect failed:", e);
+    } finally {
+      setIsGoogleConnecting(false);
+    }
+  };
+
+  const handleGoogleSyncNow = async () => {
+    setIsGoogleSyncing(true);
+    try {
+      await api.post("/integrations/google/sync-now", {});
+      await Promise.all([loadGoogleStatus(), loadContacts()]);
+    } catch (e) {
+      console.error("Google sync-now failed:", e);
+    } finally {
+      setIsGoogleSyncing(false);
+    }
+  };
+
+  const handleGoogleDisconnect = async () => {
+    setIsGoogleDisconnecting(true);
+    try {
+      await api.post("/integrations/google/disconnect", {});
+      await Promise.all([loadGoogleStatus(), loadContacts()]);
+    } catch (e) {
+      console.error("Google disconnect failed:", e);
+    } finally {
+      setIsGoogleDisconnecting(false);
+    }
+  };
+
+  // Badge label
+  const googleBadge = useMemo(() => {
+    if (isGoogleLoading) return "Google: checking…";
+    if (!googleStatus.linked) return "Google: not linked";
+    if (googleStatus.lastGoogleSyncAt) {
+      try {
+        return `Google: linked · ${format(new Date(googleStatus.lastGoogleSyncAt), "PPp")}`;
+      } catch {
+        return "Google: linked";
+      }
+    }
+    return "Google: linked";
+  }, [googleStatus, isGoogleLoading]);
 
   if (isLoading) {
     return (
@@ -189,16 +308,93 @@ export default function ContactsPage() {
         <div className="bg-white border-b border-slate-200 sticky top-0 z-10">
           <div className="px-4 py-3">
             <div className="flex items-center justify-between mb-3">
-              <h1 className="text-xl font-medium text-slate-900">Contacts</h1>
+              <div className="flex items-center gap-3">
+                <h1 className="text-xl font-medium text-slate-900">Contacts</h1>
+                <Badge variant={googleStatus.linked ? "secondary" : "outline"} className="hidden sm:inline-flex">
+                  {googleBadge}
+                </Badge>
+              </div>
+
               <div className="flex items-center gap-2">
-                 <Button
+                {/* Google connect/sync controls */}
+                {googleStatus.linked ? (
+                  <>
+                    <Button
+                      variant="ghost"
+                      onClick={handleGoogleSyncNow}
+                      disabled={isGoogleSyncing}
+                      className="rounded-full hidden sm:inline-flex"
+                    >
+                      <RefreshCw className={`w-4 h-4 mr-2 ${isGoogleSyncing ? "animate-spin" : ""}`} />
+                      Sync Google
+                    </Button>
+
+                    <Button
+                      variant="ghost"
+                      onClick={handleGoogleDisconnect}
+                      disabled={isGoogleDisconnecting}
+                      className="rounded-full hidden sm:inline-flex"
+                    >
+                      <Unlink className="w-4 h-4 mr-2" />
+                      Disconnect
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    onClick={handleGoogleConnect}
+                    disabled={isGoogleConnecting}
+                    className="rounded-full hidden sm:inline-flex"
+                  >
+                    <Link2 className="w-4 h-4 mr-2" />
+                    {isGoogleConnecting ? "Linking…" : "Link Google"}
+                  </Button>
+                )}
+
+                {/* Icon-only fallbacks for small screens */}
+                {!googleStatus.linked ? (
+                  <Button
                     variant="ghost"
                     size="icon"
-                    onClick={toggleSelectionMode}
-                    className="rounded-full"
+                    onClick={handleGoogleConnect}
+                    disabled={isGoogleConnecting}
+                    className="rounded-full sm:hidden"
+                    aria-label="Link Google"
+                    title="Link Google"
                   >
-                    <CheckSquare className="w-5 h-5" />
+                    <Link2 className="w-5 h-5" />
                   </Button>
+                ) : (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleGoogleSyncNow}
+                      disabled={isGoogleSyncing}
+                      className="rounded-full sm:hidden"
+                      aria-label="Sync Google"
+                      title="Sync Google"
+                    >
+                      <RefreshCw className={`w-5 h-5 ${isGoogleSyncing ? "animate-spin" : ""}`} />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleGoogleDisconnect}
+                      disabled={isGoogleDisconnecting}
+                      className="rounded-full sm:hidden"
+                      aria-label="Disconnect Google"
+                      title="Disconnect Google"
+                    >
+                      <Unlink className="w-5 h-5" />
+                    </Button>
+                  </>
+                )}
+
+                <Button variant="ghost" size="icon" onClick={toggleSelectionMode} className="rounded-full">
+                  <CheckSquare className="w-5 h-5" />
+                </Button>
+
                 <Button
                   variant="ghost"
                   size="icon"
@@ -206,8 +402,9 @@ export default function ContactsPage() {
                   disabled={isRefreshing}
                   className="rounded-full"
                 >
-                  <RefreshCw className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`w-5 h-5 ${isRefreshing ? "animate-spin" : ""}`} />
                 </Button>
+
                 <Button variant="ghost" size="icon" className="rounded-full">
                   <MoreVertical className="w-5 h-5" />
                 </Button>
@@ -241,90 +438,87 @@ export default function ContactsPage() {
           <div className="flex flex-col items-center justify-center py-20">
             <Users className="w-16 h-16 text-slate-300 mb-4" />
             <h3 className="text-lg font-medium text-slate-600 mb-2">
-              {searchQuery ? 'No contacts found' : 'No contacts synced'}
+              {searchQuery ? "No contacts found" : "No contacts synced"}
             </h3>
             <p className="text-slate-500 text-center max-w-md">
-              {searchQuery 
-                ? 'Try a different search term' 
-                : 'Contacts will appear here once synced from your devices'
-              }
+              {searchQuery ? "Try a different search term" : "Contacts will appear here once synced from your devices"}
             </p>
           </div>
         ) : (
-          Object.keys(filteredContacts).sort().map((letter) => (
-            <div key={letter}>
-              <div className="sticky top-0 bg-slate-50 px-4 py-2 border-b border-slate-100 z-5">
-                <h3 className="text-sm font-medium text-slate-600">{letter}</h3>
-              </div>
+          Object.keys(filteredContacts)
+            .sort()
+            .map((letter) => (
+              <div key={letter}>
+                <div className="sticky top-0 bg-slate-50 px-4 py-2 border-b border-slate-100 z-5">
+                  <h3 className="text-sm font-medium text-slate-600">{letter}</h3>
+                </div>
 
-              {filteredContacts[letter].map((contact, index) => {
-                const isSelected = selectedContacts.has(contact.contactId);
-                return (
-                  <motion.div
-                    key={contact.contactId}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: index * 0.02 }}
-                    className={`px-4 py-3 border-b border-slate-100 transition-colors cursor-pointer flex items-center gap-4 ${
-                      isSelected ? 'bg-blue-50' : 'hover:bg-slate-50'
-                    }`}
-                    onClick={() => isSelectionMode && handleContactClick(contact.contactId)}
-                  >
-                    <div className="w-10 h-10 flex items-center justify-center">
-                      {isSelectionMode ? (
-                        <Checkbox
-                          checked={isSelected}
-                          onCheckedChange={() => handleContactClick(contact.contactId)}
-                          className="w-5 h-5"
-                          aria-label={`Select ${contact.full_name}`}
-                        />
-                      ) : (
-                        <Avatar className="w-10 h-10">
-                          {contact.photo_url ? (
-                            <AvatarImage src={contact.photo_url} alt={contact.full_name} />
-                          ) : (
-                            <AvatarFallback className="bg-blue-500 text-white text-sm font-medium">
-                              {getContactInitials(contact.full_name)}
-                            </AvatarFallback>
-                          )}
-                        </Avatar>
-                      )}
-                    </div>
-                    
-                    <div className="flex-1 min-w-0">
-                        <h3 className="font-medium text-slate-900 truncate">
-                          {contact.full_name || 'No Name'}
-                        </h3>
-
-                      <div className="flex items-center gap-3 mt-1">
-                        {contact.phone_number && (
-                          <div className="flex items-center gap-1 text-sm text-slate-600">
-                            <Phone className="w-3 h-3" />
-                            <span>{contact.phone_number}</span>
-                          </div>
-                        )}
-                        {contact.email && (
-                          <div className="flex items-center gap-1 text-sm text-slate-600">
-                            <Mail className="w-3 h-3" />
-                            <span className="truncate">{contact.email}</span>
-                          </div>
+                {filteredContacts[letter].map((contact, index) => {
+                  const isSelected = selectedContacts.has(contact.contactId);
+                  return (
+                    <motion.div
+                      key={contact.contactId}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: index * 0.02 }}
+                      className={`px-4 py-3 border-b border-slate-100 transition-colors cursor-pointer flex items-center gap-4 ${
+                        isSelected ? "bg-blue-50" : "hover:bg-slate-50"
+                      }`}
+                      onClick={() => isSelectionMode && handleContactClick(contact.contactId)}
+                    >
+                      <div className="w-10 h-10 flex items-center justify-center">
+                        {isSelectionMode ? (
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => handleContactClick(contact.contactId)}
+                            className="w-5 h-5"
+                            aria-label={`Select ${contact.full_name}`}
+                          />
+                        ) : (
+                          <Avatar className="w-10 h-10">
+                            {contact.photo_url ? (
+                              <AvatarImage src={contact.photo_url} alt={contact.full_name} />
+                            ) : (
+                              <AvatarFallback className="bg-blue-500 text-white text-sm font-medium">
+                                {getContactInitials(contact.full_name)}
+                              </AvatarFallback>
+                            )}
+                          </Avatar>
                         )}
                       </div>
 
-                      {contact.company && (
-                        <div className="flex items-center gap-1 text-xs text-slate-500 mt-1">
-                          <Building className="w-3 h-3" />
-                          <span className="truncate">
-                            {contact.job_title ? `${contact.job_title} at ${contact.company}` : contact.company}
-                          </span>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-medium text-slate-900 truncate">{contact.full_name || "No Name"}</h3>
+
+                        <div className="flex items-center gap-3 mt-1">
+                          {contact.phone_number && (
+                            <div className="flex items-center gap-1 text-sm text-slate-600">
+                              <Phone className="w-3 h-3" />
+                              <span>{contact.phone_number}</span>
+                            </div>
+                          )}
+                          {contact.email && (
+                            <div className="flex items-center gap-1 text-sm text-slate-600">
+                              <Mail className="w-3 h-3" />
+                              <span className="truncate">{contact.email}</span>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </div>
-          ))
+
+                        {contact.company && (
+                          <div className="flex items-center gap-1 text-xs text-slate-500 mt-1">
+                            <Building className="w-3 h-3" />
+                            <span className="truncate">
+                              {contact.job_title ? `${contact.job_title} at ${contact.company}` : contact.company}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            ))
         )}
       </div>
     </div>
