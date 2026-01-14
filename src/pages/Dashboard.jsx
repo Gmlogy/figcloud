@@ -94,12 +94,81 @@ function safeStr(x) {
   return typeof x === "string" ? x : x == null ? "" : String(x);
 }
 
+function digitsOnly(x) {
+  return safeStr(x).replace(/\D/g, "");
+}
+
+/**
+ * ✅ Canonical phone key so:
+ * - "+212661..." and "0661..." become the SAME key
+ * - "+1XXXXXXXXXX" and "1XXXXXXXXXX" become same key (US)
+ *
+ * This is what prevents "same contact -> 2 convos".
+ */
+function canonicalPhoneKey(raw) {
+  let d = digitsOnly(raw);
+  if (!d) return "";
+
+  // handle 00 international prefix
+  if (d.startsWith("00")) d = d.slice(2);
+
+  // Morocco heuristics: country 212 + 9 digits OR local 0 + 9 digits
+  if (d.length === 12 && d.startsWith("212")) return d.slice(-9);
+  if (d.length === 10 && d.startsWith("0")) return d.slice(1);
+
+  // US heuristics
+  if (d.length === 11 && d.startsWith("1")) return d.slice(1);
+
+  // generic fallback: prefer last 10 if very long (common when country code included)
+  if (d.length > 10) return d.slice(-10);
+
+  return d;
+}
+
+/**
+ * Generate many lookup keys for a phone number.
+ * This makes contact resolution resilient even if stored formats differ.
+ */
+function phoneLookupKeys(raw) {
+  const keys = [];
+  const rawStr = safeStr(raw).trim();
+  if (!rawStr) return keys;
+
+  // from your existing normalizer (whatever it does in your project)
+  const n = normalizePhoneNumber(rawStr);
+  if (n) keys.push(n);
+
+  const d = digitsOnly(rawStr);
+  if (d) keys.push(d);
+
+  const c = canonicalPhoneKey(rawStr);
+  if (c) keys.push(c);
+
+  if (d && d.length >= 10) keys.push(d.slice(-10));
+  if (d && d.length >= 9) keys.push(d.slice(-9));
+
+  // also try variants from normalized value
+  if (n) {
+    const nd = digitsOnly(n);
+    if (nd) {
+      keys.push(nd);
+      const nc = canonicalPhoneKey(nd);
+      if (nc) keys.push(nc);
+      if (nd.length >= 10) keys.push(nd.slice(-10));
+      if (nd.length >= 9) keys.push(nd.slice(-9));
+    }
+  }
+
+  // unique
+  return Array.from(new Set(keys.filter(Boolean)));
+}
+
 // A “good enough” fingerprint for same-message dedupe.
 function messageFingerprint(m) {
-  const msgType = safeStr(m?.messageType || m?.message_type).toUpperCase();
+  const msgType = safeStr(m?.messageType || m?.message_messageType || m?.message_type).toUpperCase();
   const dir = msgType === "SENT" ? "S" : "R";
 
-  const addr = normalizePhoneNumber(m?.address || m?.phone_number || "");
+  const addr = canonicalPhoneKey(m?.address || m?.phone_number || "");
   const body = safeStr(m?.body ?? m?.message_content ?? m?.text ?? m?.raw?.body ?? "").trim();
 
   const atts = Array.isArray(m?.attachments) ? m.attachments : [];
@@ -146,7 +215,7 @@ function normalizeThreadIdKey(threadId) {
 
   const parts = s
     .split("_")
-    .map((p) => normalizePhoneNumber(p))
+    .map((p) => canonicalPhoneKey(p) || normalizePhoneNumber(p) || digitsOnly(p))
     .filter(Boolean)
     .sort();
 
@@ -248,8 +317,12 @@ function resolveLastReadIso(threadReads, threadId, message) {
 
   if (msgThreadId != null) keys.push(String(msgThreadId));
 
-  if (message?.address) keys.push(normalizePhoneNumber(message.address));
-  if (message?.raw?.address) keys.push(normalizePhoneNumber(message.raw.address));
+  if (message?.address) keys.push(String(message.address));
+  if (message?.raw?.address) keys.push(String(message.raw.address));
+
+  // also try canonical phone forms
+  if (message?.address) keys.push(canonicalPhoneKey(message.address));
+  if (message?.raw?.address) keys.push(canonicalPhoneKey(message.raw.address));
 
   for (const k of keys) {
     if (!k) continue;
@@ -284,8 +357,7 @@ function computeDisplayBody(message) {
     const b = body.trim();
     if (b && b !== "[MMS]") return b;
 
-    // ✅ IMPORTANT: don’t force "[MMS]" as last_message text in thread list
-    // return "" so the UI shows the thread but with blank preview if needed
+    // don’t force "[MMS]" as last_message preview
     return b === "[MMS]" ? "" : b;
   }
 
@@ -306,10 +378,10 @@ export default function DashboardPage() {
   const [isNewConversationModalOpen, setIsNewConversationModalOpen] = useState(false);
   const [ephemeralConversations, setEphemeralConversations] = useState({});
 
-  // ✅ new: progressive loading status
+  // progressive loading status
   const [messagesLoadInfo, setMessagesLoadInfo] = useState({ loading: false, loaded: 0, error: "" });
 
-  // --- WS refs/state ---
+  // WS refs/state
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
   const reconnectAttemptRef = useRef(0);
@@ -485,11 +557,11 @@ export default function DashboardPage() {
     };
   };
 
-  // ✅ NEW: paged /messages fetch
+  // paged /messages fetch
   const fetchMessagesPaged = useCallback(async () => {
     const LIMIT = 200;
     const MAX_PAGES = 200;     // safety
-    const MAX_ITEMS = 20000;   // safety (won’t hit for you)
+    const MAX_ITEMS = 20000;   // safety
 
     let cursor = null;
     let page = 0;
@@ -509,7 +581,6 @@ export default function DashboardPage() {
           },
         });
       } catch (e) {
-        // If your backend doesn't support pagination, break and fallback
         console.warn("[messages] page fetch failed, will fallback:", e);
         throw e;
       }
@@ -519,13 +590,11 @@ export default function DashboardPage() {
 
       if (items.length) {
         all = dedupeMessagesArray([...all, ...items]);
-        setMessages(all); // ✅ show conversations as soon as possible
+        setMessages(all); // show conversations as soon as possible
         setMessagesLoadInfo({ loading: true, loaded: all.length, error: "" });
       }
 
-      if (!next || items.length === 0) {
-        break;
-      }
+      if (!next || items.length === 0) break;
 
       cursor = typeof next === "string" ? next : JSON.stringify(next);
     }
@@ -547,7 +616,7 @@ export default function DashboardPage() {
       };
       setCurrentUser(user);
 
-      // ---- contacts ----
+      // contacts
       let contactsArray = [];
       try {
         const fetchedContacts = await api.get("/contacts");
@@ -557,7 +626,7 @@ export default function DashboardPage() {
         contactsArray = [];
       }
 
-      // ---- reads ----
+      // reads
       let readsArray = [];
       try {
         const fetchedReads = await api.get("/threads/read");
@@ -572,7 +641,7 @@ export default function DashboardPage() {
       );
       setThreadReads(extractLastReadMap(readsArray));
 
-      // ---- messages (paged first, fallback to plain) ----
+      // messages
       try {
         await fetchMessagesPaged();
       } catch (err) {
@@ -672,48 +741,188 @@ export default function DashboardPage() {
     }
   }, []);
 
-  // ✅ IMMEDIATE WIN: build a fast lookup map once (instead of contacts.find per message)
-  const contactsByPhone = useMemo(() => {
+  /**
+   * ✅ BIG FIX: Build a contact index that supports many phone variants.
+   * This prevents:
+   * - "same contact appears twice"
+   * - "sometimes name is blank"
+   */
+  const contactsIndex = useMemo(() => {
     const map = new Map();
+
+    const getName = (c) =>
+      c?.full_name || c?.contact_name || c?.name || c?.display_name || "";
+
+    const extractNumbers = (c) => {
+      const nums = [];
+
+      const push = (v) => {
+        const s = safeStr(v).trim();
+        if (s) nums.push(s);
+      };
+
+      push(c?.phone_number);
+      push(c?.phoneNumber);
+
+      const tryArrayField = (field) => {
+        if (Array.isArray(field)) {
+          field.forEach((x) => {
+            if (typeof x === "string") return push(x);
+            if (x && typeof x === "object") push(x.number || x.phone_number || x.phone || x.value);
+          });
+        } else if (typeof field === "string") {
+          push(field);
+        }
+      };
+
+      tryArrayField(c?.phone_numbers);
+      tryArrayField(c?.phoneNumbers);
+      tryArrayField(c?.numbers);
+      tryArrayField(c?.phones);
+      tryArrayField(c?.phone_list);
+      tryArrayField(c?.phoneList);
+      tryArrayField(c?.raw?.phones);
+      tryArrayField(c?.raw?.numbers);
+
+      return Array.from(new Set(nums));
+    };
+
     for (const c of Array.isArray(contacts) ? contacts : []) {
-      const k = normalizePhoneNumber(c?.phone_number || "");
-      if (k) map.set(k, c);
+      const name = getName(c);
+      const numbers = extractNumbers(c);
+      if (!numbers.length) continue;
+
+      // pick a canonical number for the contact (stable thread key)
+      const canonical =
+        canonicalPhoneKey(numbers[0]) ||
+        canonicalPhoneKey(normalizePhoneNumber(numbers[0])) ||
+        digitsOnly(numbers[0]) ||
+        normalizePhoneNumber(numbers[0]) ||
+        numbers[0];
+
+      const displayNumber = normalizePhoneNumber(numbers[0]) || numbers[0];
+
+      const entry = { contact: c, canonicalKey: canonical, displayNumber };
+
+      for (const num of numbers) {
+        for (const k of phoneLookupKeys(num)) {
+          const existing = map.get(k);
+          // prefer entries that actually have a name
+          if (!existing) {
+            map.set(k, entry);
+          } else {
+            const existingName = getName(existing.contact);
+            if (!existingName && name) map.set(k, entry);
+          }
+        }
+      }
+
+      // also map the canonical key itself
+      if (canonical) {
+        const existing = map.get(canonical);
+        if (!existing) map.set(canonical, entry);
+        else {
+          const existingName = getName(existing.contact);
+          if (!existingName && name) map.set(canonical, entry);
+        }
+      }
     }
+
     return map;
   }, [contacts]);
+
+  const lookupContact = useCallback(
+    (addressRaw) => {
+      const keys = phoneLookupKeys(addressRaw);
+      for (const k of keys) {
+        const hit = contactsIndex.get(k);
+        if (hit) return hit;
+      }
+      // also try canonical-only as last resort
+      const canon = canonicalPhoneKey(addressRaw);
+      if (canon) return contactsIndex.get(canon) || null;
+      return null;
+    },
+    [contactsIndex]
+  );
+
+  const canonicalMeKey = useMemo(() => {
+    const myRawPhone = currentUser?.phone_number || currentUser?.phoneNumber || "";
+    return (
+      canonicalPhoneKey(myRawPhone) ||
+      canonicalPhoneKey(normalizePhoneNumber(myRawPhone)) ||
+      digitsOnly(myRawPhone) ||
+      normalizePhoneNumber(myRawPhone) ||
+      safeStr(myRawPhone)
+    );
+  }, [currentUser]);
 
   // Build conversations from messages + contacts
   const conversations = useMemo(() => {
     if (!Array.isArray(messages) || !currentUser) return {};
 
-    const myRawPhone = currentUser.phone_number || currentUser.phoneNumber || "";
-    const normalizedMe = normalizePhoneNumber(myRawPhone);
-
     return messages.reduce((acc, message) => {
-      const normalizedAddress = normalizePhoneNumber(message.address);
+      const addrRaw =
+        message?.address ??
+        message?.phone_number ??
+        message?.raw?.address ??
+        message?.raw?.phone_number ??
+        "";
 
-      if (!normalizedAddress && !normalizedMe) return acc;
+      const hit = lookupContact(addrRaw);
+      const contact = hit?.contact || null;
+
+      const remoteKey =
+        hit?.canonicalKey ||
+        canonicalPhoneKey(addrRaw) ||
+        canonicalPhoneKey(normalizePhoneNumber(addrRaw)) ||
+        digitsOnly(addrRaw) ||
+        normalizePhoneNumber(addrRaw) ||
+        safeStr(addrRaw);
+
+      // if we have no remote key at all, skip
+      if (!remoteKey && !canonicalMeKey) return acc;
 
       let threadId;
-      if (normalizedMe) {
-        const participants = [normalizedMe, normalizedAddress].filter(Boolean).sort();
+      if (canonicalMeKey) {
+        const participants = [canonicalMeKey, remoteKey].filter(Boolean).sort();
         threadId = participants.join("_");
       } else {
-        threadId = normalizedAddress || message.address || "unknown";
+        threadId = remoteKey || safeStr(addrRaw) || "unknown";
       }
 
       if (!acc[threadId]) {
-        const contact = normalizedAddress ? contactsByPhone.get(normalizedAddress) : null;
+        const contactName =
+          contact?.full_name ||
+          contact?.contact_name ||
+          contact?.name ||
+          contact?.display_name ||
+          "";
+
+        const displayNumber =
+          hit?.displayNumber || normalizePhoneNumber(addrRaw) || safeStr(addrRaw);
 
         acc[threadId] = {
           thread_id: threadId,
-          contact_name: contact?.full_name || message.address,
-          phone_number: normalizedAddress || message.address,
+          contact_name: contactName || displayNumber,
+          phone_number: displayNumber,
           messages: [],
           last_message: null,
           unread_count: 0,
           is_group: message.is_group || false,
         };
+      } else {
+        // ✅ If this thread was created earlier without name, upgrade it when contact resolves
+        const existing = acc[threadId];
+        const contactName =
+          contact?.full_name ||
+          contact?.contact_name ||
+          contact?.name ||
+          contact?.display_name ||
+          "";
+        if (contactName && (existing.contact_name === existing.phone_number || !existing.contact_name)) {
+          existing.contact_name = contactName;
+        }
       }
 
       const msgType = (message.messageType || "").toString().toUpperCase();
@@ -723,7 +932,10 @@ export default function DashboardPage() {
       const attachments = Array.isArray(message.attachments) ? message.attachments : [];
       const kind = message.kind || "";
       const text = message.text || "";
-      const isMms = String(kind).toLowerCase() === "mms" || attachments.length > 0 || message.msg_box != null;
+      const isMms =
+        String(kind).toLowerCase() === "mms" ||
+        attachments.length > 0 ||
+        message.msg_box != null;
 
       const displayBody = computeDisplayBody(message);
 
@@ -780,7 +992,7 @@ export default function DashboardPage() {
 
       return acc;
     }, {});
-  }, [messages, contactsByPhone, currentUser, threadReads]);
+  }, [messages, currentUser, threadReads, canonicalMeKey, lookupContact]);
 
   const allConversations = useMemo(() => {
     const merged = { ...conversations, ...ephemeralConversations };
@@ -823,21 +1035,34 @@ export default function DashboardPage() {
   const handleStartConversation = (recipient) => {
     if (!currentUser || !recipient.phone_number) return;
 
-    const participants = [
-      currentUser.phone_number || currentUser.phoneNumber,
-      recipient.phone_number,
-    ]
-      .filter(Boolean)
-      .sort();
+    const meRaw = currentUser.phone_number || currentUser.phoneNumber || "";
+    const otherRaw = recipient.phone_number;
 
+    const meKey =
+      canonicalPhoneKey(meRaw) ||
+      canonicalPhoneKey(normalizePhoneNumber(meRaw)) ||
+      digitsOnly(meRaw) ||
+      normalizePhoneNumber(meRaw) ||
+      meRaw;
+
+    const otherKey =
+      canonicalPhoneKey(otherRaw) ||
+      canonicalPhoneKey(normalizePhoneNumber(otherRaw)) ||
+      digitsOnly(otherRaw) ||
+      normalizePhoneNumber(otherRaw) ||
+      otherRaw;
+
+    const participants = [meKey, otherKey].filter(Boolean).sort();
     const newThreadId = participants.join("_");
 
     if (!allConversations[newThreadId]) {
+      const name = recipient.contact_name || recipient.full_name || recipient.name || "";
+
       const newPlaceholder = {
         thread_id: newThreadId,
-        contact_name: recipient.contact_name,
-        phone_number: recipient.phone_number,
-        display_name: recipient.contact_name || recipient.phone_number,
+        contact_name: name || (normalizePhoneNumber(otherRaw) || otherRaw),
+        phone_number: normalizePhoneNumber(otherRaw) || otherRaw,
+        display_name: name || (normalizePhoneNumber(otherRaw) || otherRaw),
         messages: [],
         is_group: false,
         last_message: null,
@@ -902,7 +1127,6 @@ export default function DashboardPage() {
               />
             </div>
 
-            {/* ✅ show message loading info */}
             {(messagesLoadInfo.loading || messagesLoadInfo.error) && (
               <div className="mt-3 text-xs text-slate-500">
                 {messagesLoadInfo.loading ? (
@@ -946,19 +1170,48 @@ export default function DashboardPage() {
                 markThreadRead(threadId, lastTs || new Date().toISOString());
               }}
               onMessageSent={(serverItem) => {
-                if (!serverItem) return;
-                setMessages((prev) => {
-                  const mid = serverItem.messageId || serverItem.id || null;
-                  const candidate = { ...serverItem, messageId: mid };
+  if (!serverItem) return;
 
-                  if (mid && prev.some((x) => (x.messageId || x.id) === mid)) return prev;
+  // ✅ Always tie it to the currently open conversation
+  const fallbackAddress =
+    selectedConversation?.phone_number ||
+    selectedConversation?.phoneNumber ||
+    "";
 
-                  const fp = messageFingerprint(candidate);
-                  if (prev.some((x) => messageFingerprint(x) === fp)) return prev;
+  const fallbackThreadId = selectedConversation?.thread_id || serverItem.threadId || serverItem.thread_id;
 
-                  return [...prev, candidate];
-                });
-              }}
+  setMessages((prev) => {
+    const mid = serverItem.messageId || serverItem.id || null;
+
+    const candidate = {
+      // normalize to your message shape used by the reducer
+      messageId: mid,
+      id: mid || `web-${Date.now()}`,
+      threadId: fallbackThreadId,
+
+      address: serverItem.address || serverItem.to || fallbackAddress,
+      messageType: (serverItem.messageType || serverItem.message_type || "SENT")
+        .toString()
+        .toUpperCase(),
+
+      body: serverItem.body ?? serverItem.message_content ?? "",
+      message_content: serverItem.body ?? serverItem.message_content ?? "",
+
+      timestamp: serverItem.timestamp || new Date().toISOString(),
+      kind: serverItem.kind || "",
+      text: serverItem.text || "",
+      attachments: Array.isArray(serverItem.attachments) ? serverItem.attachments : [],
+    };
+
+    if (mid && prev.some((x) => (x.messageId || x.id) === mid)) return prev;
+
+    const fp = messageFingerprint(candidate);
+    if (prev.some((x) => messageFingerprint(x) === fp)) return prev;
+
+    return [...prev, candidate];
+  });
+}}
+
               onLoadOlder={null}
               hasMore={false}
               isLoadingThread={false}
