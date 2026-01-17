@@ -1,7 +1,7 @@
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { createPageUrl } from "@/utils";
-import { MessageSquare, Smartphone, Settings, Shield, Wifi, Users, Camera, Download, LogOut } from "lucide-react";
+import { MessageSquare, Smartphone, Settings, Shield, Wifi, Users, Camera, Download, LogOut, Music } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Sidebar,
@@ -28,6 +28,10 @@ const navigationItems = [
     title: "Photos",
     url: createPageUrl("Photos"),
     icon: Camera,
+  },
+  { title: "Music", 
+    url: createPageUrl("Music"), 
+    icon: Music 
   },
   {
     title: "Contacts",
