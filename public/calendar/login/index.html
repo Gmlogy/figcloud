@@ -6,14 +6,14 @@
   <title>Fig Cloud — Verify Device</title>
   <style>
     :root{
-      --bg: #7b7b7b;          /* outer backdrop */
-      --card: #ffffff;        /* main card */
-      --ink: #111827;         /* main text */
-      --muted: #6b7280;       /* secondary text */
-      --line: #e5e7eb;        /* borders */
-      --panel: #f3f4f6;       /* soft panels */
-      --accent: #7d7993;      /* muted purple button like screenshot */
-      --accent-2: #6c6883;    /* hover */
+      --bg: #7b7b7b;
+      --card: #ffffff;
+      --ink: #111827;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --panel: #f3f4f6;
+      --accent: #7d7993;
+      --accent-2: #6c6883;
       --focus: rgba(125,121,147,.22);
       --shadow: 0 20px 60px rgba(0,0,0,.22);
       --radius: 22px;
@@ -31,10 +31,7 @@
       padding: 24px;
     }
 
-    .wrap{
-      width: min(520px, 100%);
-    }
-
+    .wrap{ width: min(520px, 100%); }
     .card{
       background: var(--card);
       border-radius: var(--radius);
@@ -59,7 +56,6 @@
       place-items: center;
       background: radial-gradient(circle at 50% 35%, #ffffff 0%, #fafafa 65%, #f1f1f1 100%);
     }
-
     .logoRing img{
       width: 54px;
       height: 54px;
@@ -79,38 +75,6 @@
       text-align: center;
       color: var(--muted);
       font-size: 15px;
-    }
-
-    .pillRow{
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      background: var(--panel);
-      border-radius: 14px;
-      padding: 8px;
-      margin: 22px 0 18px;
-      border: 1px solid var(--line);
-    }
-
-    .pill{
-      border: 0;
-      background: transparent;
-      padding: 10px 12px;
-      border-radius: 12px;
-      font-weight: 600;
-      color: var(--muted);
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      user-select: none;
-    }
-    .pill.active{
-      background: #fff;
-      color: var(--ink);
-      box-shadow: 0 6px 16px rgba(0,0,0,.06);
-      border: 1px solid rgba(0,0,0,.04);
     }
 
     .sectionTitle{
@@ -136,7 +100,7 @@
       background: #fff;
       padding: 0 16px;
       font-size: 18px;
-      letter-spacing: .08em;
+      letter-spacing: .10em;
       text-transform: uppercase;
       outline: none;
     }
@@ -177,9 +141,7 @@
       font-size: 14px;
       color: #374151;
     }
-    .scopeText b{
-      color: #111827;
-    }
+    .scopeText b{ color: #111827; }
 
     .actions{
       display: grid;
@@ -198,15 +160,13 @@
       align-items: center;
       justify-content: center;
       gap: 10px;
-      transition: transform .05s ease, background .15s ease, border-color .15s ease;
+      transition: transform .05s ease, background .15s ease, border-color .15s ease, opacity .15s ease;
       user-select: none;
     }
     .btn:active{ transform: translateY(1px); }
+    .btn[disabled]{ opacity: .65; cursor: not-allowed; }
 
-    .btnPrimary{
-      background: var(--accent);
-      color: #fff;
-    }
+    .btnPrimary{ background: var(--accent); color: #fff; }
     .btnPrimary:hover{ background: var(--accent-2); }
 
     .btnGhost{
@@ -240,6 +200,7 @@
       background: #f9fafb;
       color: #374151;
       font-size: 14px;
+      word-break: break-word;
     }
     .status.show{ display: block; }
     .status.error{
@@ -253,7 +214,6 @@
       color: #166534;
     }
 
-    /* small screens */
     @media (max-width: 420px){
       .card{ padding: 26px 18px 20px; }
       h1{ font-size: 24px; }
@@ -265,14 +225,11 @@
     <div class="card">
       <div class="brand">
         <div class="logoRing">
-          <!-- Put your logo here: public/calendar/login/fig-logo.png -->
           <img src="/calendar/login/fig-logo.png" alt="Fig logo" onerror="this.style.display='none'">
         </div>
         <h1>Approve this device</h1>
         <p class="sub">Enter the code shown on your Figphone to finish connecting.</p>
       </div>
-
-      
 
       <div id="modeCode">
         <div class="sectionTitle">Verification code</div>
@@ -282,11 +239,11 @@
             class="input"
             inputmode="text"
             autocomplete="one-time-code"
-            placeholder="XXXX-XXXX"
-            maxlength="9"
+            placeholder="ABC123"
+            maxlength="12"
           />
           <p class="help">
-            This lets Fig Cloud confirm it’s really you. We’ll exchange it for a secure connection token.
+            We’ll use this code to find your device session, then open Google sign-in on this computer.
           </p>
         </div>
 
@@ -303,7 +260,7 @@
         </div>
 
         <div class="actions">
-          <button class="btn btnPrimary" type="button" onclick="approveVerification()">
+          <button id="approveBtn" class="btn btnPrimary" type="button" onclick="approveVerification()">
             Approve connection →
           </button>
           <button class="btn btnGhost" type="button" onclick="cancelVerification()">
@@ -322,49 +279,20 @@
           <span>Your verification code is encrypted in transit and never shared.</span>
         </div>
       </div>
-
-      <div id="modeQr" style="display:none;">
-        <div class="sectionTitle">QR verification</div>
-        <p class="help" style="margin-top:6px;">
-          If you later add QR verification: show a QR on the Figphone and scan it here.
-        </p>
-        <div class="scopes" style="margin-top:12px;">
-          <div class="scopeText" style="color: var(--muted);">
-            Placeholder panel — you can remove this mode if you don’t want QR.
-          </div>
-        </div>
-        <div class="actions">
-          <button class="btn btnGhost" type="button" onclick="setMode('code')">Back</button>
-        </div>
-      </div>
     </div>
   </div>
 
   <script>
+    /**
+     * If this page is hosted on the SAME domain as your API, leave API_BASE = "".
+     * If your API is on another domain, set it like:
+     *   const API_BASE = "https://api.figcloud.com";
+     */
+    const API_BASE = "";
+
     const codeInput = document.getElementById("codeInput");
     const statusEl = document.getElementById("status");
-
-    function setMode(mode){
-      const tabCode = document.getElementById("tabCode");
-      const tabScan = document.getElementById("tabScan");
-      const modeCode = document.getElementById("modeCode");
-      const modeQr = document.getElementById("modeQr");
-
-      const isCode = mode === "code";
-      tabCode.classList.toggle("active", isCode);
-      tabScan.classList.toggle("active", !isCode);
-      modeCode.style.display = isCode ? "block" : "none";
-      modeQr.style.display = isCode ? "none" : "block";
-    }
-
-    // Auto-format XXXX-XXXX
-    codeInput?.addEventListener("input", () => {
-      let v = (codeInput.value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-      if (v.length > 8) v = v.slice(0, 8);
-      if (v.length > 4) v = v.slice(0,4) + "-" + v.slice(4);
-      codeInput.value = v;
-      clearStatus();
-    });
+    const approveBtn = document.getElementById("approveBtn");
 
     function showStatus(msg, kind){
       statusEl.textContent = msg;
@@ -374,32 +302,103 @@
       statusEl.className = "status";
       statusEl.textContent = "";
     }
-
-    function getCode(){
-      return (codeInput.value || "").trim().toUpperCase();
+    function setBusy(busy){
+      approveBtn.disabled = !!busy;
+      codeInput.disabled = !!busy;
+      approveBtn.textContent = busy ? "Verifying…" : "Approve connection →";
     }
 
-    // TODO: wire to your backend
+    // Normalize: uppercase, remove non-alphanumerics (allows user to type ABC-123 etc)
+    function normalizeCode(raw){
+      return String(raw || "")
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, "")
+        .trim();
+    }
+
+    function getCode(){
+      return normalizeCode(codeInput.value);
+    }
+
+    // Friendly input formatting (optional): keep user's dashes/spaces but normalize for request
+    codeInput?.addEventListener("input", () => {
+      // Just uppercase + strip weird chars, but don't force a pattern
+      const raw = (codeInput.value || "").toUpperCase().replace(/[^A-Z0-9\- ]/g, "");
+      codeInput.value = raw;
+      clearStatus();
+    });
+
+    // Press Enter to submit
+    codeInput?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") approveVerification();
+    });
+
+    // Prefill from URL like /calendar/login/?code=ABC123
+    (function prefillFromQuery(){
+      const params = new URLSearchParams(location.search);
+      const q = params.get("code") || params.get("userCode") || "";
+      const norm = normalizeCode(q);
+      if (norm) codeInput.value = norm;
+    })();
+
+    /**
+     * Backend contract used here:
+     * POST /calendar/login/poll
+     * Body: { "userCode": "ABC123" }
+     * Response (200):
+     *   - if pending: { "status":"PENDING", "loginUrl":"https://accounts.google.com/....", ... }
+     *   - if connected already: { "status":"CONNECTED" }
+     *   - if expired: { "status":"EXPIRED" }
+     * Error (4xx/5xx): { "error": "...", "message": "..." }
+     */
     async function approveVerification(){
-      const code = getCode();
-      if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
-        showStatus("Please enter a valid code in the format XXXX-XXXX.", "error");
+      const userCode = getCode();
+
+      // If your app generates exactly 6 chars, enforce it:
+      if (!/^[A-Z0-9]{6}$/.test(userCode)) {
+        showStatus("Please enter the 6-character code shown on your Figphone (example: ABC123).", "error");
         return;
       }
 
-      showStatus("Verifying…", "");
+      clearStatus();
+      setBusy(true);
 
       try {
-        // Example placeholder:
-        // const res = await fetch("/api/calendar/verify", { method:"POST", headers:{...}, body: JSON.stringify({ code }) })
-        // const json = await res.json()
-        // if (!res.ok) throw new Error(json?.message || "Verification failed")
+        const res = await fetch(`${API_BASE}/calendar/login/poll`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userCode })
+        });
 
-        await new Promise(r => setTimeout(r, 700)); // fake delay
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data?.message || data?.error || `Request failed (${res.status})`);
+        }
 
-        showStatus("Approved ✅ You can return to your Figphone.", "ok");
+        // Preferred: if backend returns loginUrl, redirect to Google OAuth
+        if (data?.loginUrl) {
+          showStatus("Opening Google sign-in…", "ok");
+          // Redirect this browser to Google
+          window.location.assign(data.loginUrl);
+          return;
+        }
+
+        // Handle other statuses nicely
+        const st = String(data?.status || "").toUpperCase();
+        if (st === "CONNECTED") {
+          showStatus("This code is already approved ✅ You can return to your Figphone.", "ok");
+          return;
+        }
+        if (st === "EXPIRED") {
+          showStatus("This code has expired. Please generate a new code on your Figphone and try again.", "error");
+          return;
+        }
+
+        throw new Error("Invalid response: missing loginUrl.");
       } catch (e) {
         showStatus(String(e?.message || e), "error");
+      } finally {
+        setBusy(false);
       }
     }
 
