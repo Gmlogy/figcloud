@@ -240,7 +240,7 @@
             inputmode="text"
             autocomplete="one-time-code"
             placeholder="ABC123"
-            maxlength="12"
+            maxlength="16"
           />
           <p class="help">
             We’ll use this code to find your device session, then open Google sign-in on this computer.
@@ -260,10 +260,10 @@
         </div>
 
         <div class="actions">
-          <button id="approveBtn" class="btn btnPrimary" type="button" onclick="approveVerification()">
+          <button id="approveBtn" class="btn btnPrimary" type="button">
             Approve connection →
           </button>
-          <button class="btn btnGhost" type="button" onclick="cancelVerification()">
+          <button id="cancelBtn" class="btn btnGhost" type="button">
             Cancel
           </button>
         </div>
@@ -284,15 +284,19 @@
 
   <script>
     /**
-     * If this page is hosted on the SAME domain as your API, leave API_BASE = "".
-     * If your API is on another domain, set it like:
-     *   const API_BASE = "https://api.figcloud.com";
+     * IMPORTANT:
+     * - If API is routed under the same host (figcloud.com), keep API_BASE = "".
+     * - If API is on another domain/subdomain, set API_BASE = "https://api.figcloud.com".
      */
     const API_BASE = "";
+
+    // API endpoints (always absolute-path to avoid /calendar/login/... relative traps)
+    const ENDPOINT_POLL = "/calendar/login/poll";
 
     const codeInput = document.getElementById("codeInput");
     const statusEl = document.getElementById("status");
     const approveBtn = document.getElementById("approveBtn");
+    const cancelBtn = document.getElementById("cancelBtn");
 
     function showStatus(msg, kind){
       statusEl.textContent = msg;
@@ -304,11 +308,11 @@
     }
     function setBusy(busy){
       approveBtn.disabled = !!busy;
+      cancelBtn.disabled = !!busy;
       codeInput.disabled = !!busy;
       approveBtn.textContent = busy ? "Verifying…" : "Approve connection →";
     }
 
-    // Normalize: uppercase, remove non-alphanumerics (allows user to type ABC-123 etc)
     function normalizeCode(raw){
       return String(raw || "")
         .toUpperCase()
@@ -320,41 +324,33 @@
       return normalizeCode(codeInput.value);
     }
 
-    // Friendly input formatting (optional): keep user's dashes/spaces but normalize for request
-    codeInput?.addEventListener("input", () => {
-      // Just uppercase + strip weird chars, but don't force a pattern
-      const raw = (codeInput.value || "").toUpperCase().replace(/[^A-Z0-9\- ]/g, "");
-      codeInput.value = raw;
+    // Keep it friendly while typing
+    codeInput.addEventListener("input", () => {
+      codeInput.value = String(codeInput.value || "")
+        .toUpperCase()
+        .replace(/[^A-Z0-9\- ]/g, "");
       clearStatus();
     });
 
-    // Press Enter to submit
-    codeInput?.addEventListener("keydown", (e) => {
+    codeInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") approveVerification();
     });
 
-    // Prefill from URL like /calendar/login/?code=ABC123
-    (function prefillFromQuery(){
-      const params = new URLSearchParams(location.search);
-      const q = params.get("code") || params.get("userCode") || "";
-      const norm = normalizeCode(q);
-      if (norm) codeInput.value = norm;
+    // Prefill from URL: ?code=ABC123 or ?userCode=ABC123
+    (function prefill(){
+      const p = new URLSearchParams(location.search);
+      const q = p.get("code") || p.get("userCode") || "";
+      const v = normalizeCode(q);
+      if (v) codeInput.value = v;
     })();
 
-    /**
-     * Backend contract used here:
-     * POST /calendar/login/poll
-     * Body: { "userCode": "ABC123" }
-     * Response (200):
-     *   - if pending: { "status":"PENDING", "loginUrl":"https://accounts.google.com/....", ... }
-     *   - if connected already: { "status":"CONNECTED" }
-     *   - if expired: { "status":"EXPIRED" }
-     * Error (4xx/5xx): { "error": "...", "message": "..." }
-     */
+    approveBtn.addEventListener("click", approveVerification);
+    cancelBtn.addEventListener("click", cancelVerification);
+
     async function approveVerification(){
       const userCode = getCode();
 
-      // If your app generates exactly 6 chars, enforce it:
+      // If your app generates exactly 6 chars, enforce 6:
       if (!/^[A-Z0-9]{6}$/.test(userCode)) {
         showStatus("Please enter the 6-character code shown on your Figphone (example: ABC123).", "error");
         return;
@@ -364,26 +360,28 @@
       setBusy(true);
 
       try {
-        const res = await fetch(`${API_BASE}/calendar/login/poll`, {
+        const url = `${API_BASE}${ENDPOINT_POLL}`;
+
+        const res = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ userCode })
         });
 
         const data = await res.json().catch(() => ({}));
+
         if (!res.ok) {
           throw new Error(data?.message || data?.error || `Request failed (${res.status})`);
         }
 
-        // Preferred: if backend returns loginUrl, redirect to Google OAuth
+        // If backend returns loginUrl -> redirect to Google OAuth on this browser
         if (data?.loginUrl) {
           showStatus("Opening Google sign-in…", "ok");
-          // Redirect this browser to Google
           window.location.assign(data.loginUrl);
           return;
         }
 
-        // Handle other statuses nicely
+        // Otherwise interpret status
         const st = String(data?.status || "").toUpperCase();
         if (st === "CONNECTED") {
           showStatus("This code is already approved ✅ You can return to your Figphone.", "ok");
@@ -393,8 +391,12 @@
           showStatus("This code has expired. Please generate a new code on your Figphone and try again.", "error");
           return;
         }
+        if (st === "PENDING" || st === "WAITING") {
+          showStatus("Code accepted. Waiting for login URL… try again in a moment.", "");
+          return;
+        }
 
-        throw new Error("Invalid response: missing loginUrl.");
+        throw new Error("Unexpected response (missing loginUrl).");
       } catch (e) {
         showStatus(String(e?.message || e), "error");
       } finally {
