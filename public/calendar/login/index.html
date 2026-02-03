@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fig Cloud — Verify Device</title>
+  <style>
+    :root{
+      --bg: #7b7b7b;          /* outer backdrop */
+      --card: #ffffff;        /* main card */
+      --ink: #111827;         /* main text */
+      --muted: #6b7280;       /* secondary text */
+      --line: #e5e7eb;        /* borders */
+      --panel: #f3f4f6;       /* soft panels */
+      --accent: #7d7993;      /* muted purple button like screenshot */
+      --accent-2: #6c6883;    /* hover */
+      --focus: rgba(125,121,147,.22);
+      --shadow: 0 20px 60px rgba(0,0,0,.22);
+      --radius: 22px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body{
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      color: var(--ink);
+      background: var(--bg);
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    .wrap{
+      width: min(520px, 100%);
+    }
+
+    .card{
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 34px 34px 28px;
+      position: relative;
+    }
+
+    .brand{
+      display: grid;
+      place-items: center;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .logoRing{
+      width: 92px;
+      height: 92px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at 50% 35%, #ffffff 0%, #fafafa 65%, #f1f1f1 100%);
+    }
+
+    .logoRing img{
+      width: 54px;
+      height: 54px;
+      object-fit: contain;
+    }
+
+    h1{
+      font-size: 28px;
+      line-height: 1.15;
+      margin: 0;
+      text-align: center;
+      letter-spacing: -0.02em;
+    }
+
+    .sub{
+      margin: 0;
+      text-align: center;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .pillRow{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      background: var(--panel);
+      border-radius: 14px;
+      padding: 8px;
+      margin: 22px 0 18px;
+      border: 1px solid var(--line);
+    }
+
+    .pill{
+      border: 0;
+      background: transparent;
+      padding: 10px 12px;
+      border-radius: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      user-select: none;
+    }
+    .pill.active{
+      background: #fff;
+      color: var(--ink);
+      box-shadow: 0 6px 16px rgba(0,0,0,.06);
+      border: 1px solid rgba(0,0,0,.04);
+    }
+
+    .sectionTitle{
+      font-size: 13px;
+      font-weight: 700;
+      color: #374151;
+      margin: 12px 0 8px;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+    }
+
+    .codeBox{
+      display: grid;
+      gap: 12px;
+      margin-top: 6px;
+    }
+
+    .input{
+      width: 100%;
+      height: 56px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 0 16px;
+      font-size: 18px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      outline: none;
+    }
+    .input:focus{
+      border-color: rgba(125,121,147,.6);
+      box-shadow: 0 0 0 6px var(--focus);
+    }
+
+    .help{
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+      margin: 0;
+    }
+
+    .scopes{
+      margin: 14px 0 0;
+      border: 1px solid var(--line);
+      background: #fbfbfb;
+      border-radius: 14px;
+      padding: 12px 14px;
+    }
+    .scopeItem{
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 8px 0;
+    }
+    .dot{
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--accent);
+      margin-top: 6px;
+      flex: 0 0 auto;
+    }
+    .scopeText{
+      font-size: 14px;
+      color: #374151;
+    }
+    .scopeText b{
+      color: #111827;
+    }
+
+    .actions{
+      display: grid;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .btn{
+      height: 56px;
+      border-radius: 14px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      transition: transform .05s ease, background .15s ease, border-color .15s ease;
+      user-select: none;
+    }
+    .btn:active{ transform: translateY(1px); }
+
+    .btnPrimary{
+      background: var(--accent);
+      color: #fff;
+    }
+    .btnPrimary:hover{ background: var(--accent-2); }
+
+    .btnGhost{
+      background: #fff;
+      border-color: var(--line);
+      color: #374151;
+    }
+    .btnGhost:hover{ background: #fafafa; }
+
+    .foot{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 16px;
+      color: #6b7280;
+      font-size: 13px;
+    }
+    .lock{
+      width: 18px;
+      height: 18px;
+      opacity: .85;
+      flex: 0 0 auto;
+    }
+
+    .status{
+      margin-top: 12px;
+      display: none;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: #f9fafb;
+      color: #374151;
+      font-size: 14px;
+    }
+    .status.show{ display: block; }
+    .status.error{
+      border-color: rgba(239,68,68,.35);
+      background: rgba(239,68,68,.06);
+      color: #991b1b;
+    }
+    .status.ok{
+      border-color: rgba(34,197,94,.35);
+      background: rgba(34,197,94,.06);
+      color: #166534;
+    }
+
+    /* small screens */
+    @media (max-width: 420px){
+      .card{ padding: 26px 18px 20px; }
+      h1{ font-size: 24px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="brand">
+        <div class="logoRing">
+          <!-- Put your logo here: public/calendar/login/fig-logo.png -->
+          <img src="/calendar/login/fig-logo.png" alt="Fig logo" onerror="this.style.display='none'">
+        </div>
+        <h1>Approve this device</h1>
+        <p class="sub">Enter the code shown on your Figphone to finish connecting.</p>
+      </div>
+
+      
+
+      <div id="modeCode">
+        <div class="sectionTitle">Verification code</div>
+        <div class="codeBox">
+          <input
+            id="codeInput"
+            class="input"
+            inputmode="text"
+            autocomplete="one-time-code"
+            placeholder="XXXX-XXXX"
+            maxlength="9"
+          />
+          <p class="help">
+            This lets Fig Cloud confirm it’s really you. We’ll exchange it for a secure connection token.
+          </p>
+        </div>
+
+        <div class="sectionTitle">What Fig will access</div>
+        <div class="scopes">
+          <div class="scopeItem">
+            <div class="dot"></div>
+            <div class="scopeText"><b>Calendar</b> — read & write events to keep devices in sync</div>
+          </div>
+          <div class="scopeItem">
+            <div class="dot"></div>
+            <div class="scopeText"><b>Tasks</b> — read & write tasks shown in the calendar</div>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="btn btnPrimary" type="button" onclick="approveVerification()">
+            Approve connection →
+          </button>
+          <button class="btn btnGhost" type="button" onclick="cancelVerification()">
+            Cancel
+          </button>
+        </div>
+
+        <div id="status" class="status" role="status"></div>
+
+        <div class="foot">
+          <svg class="lock" viewBox="0 0 24 24" fill="none">
+            <path d="M7 10V8a5 5 0 0 1 10 0v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M6 10h12a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="2"/>
+            <path d="M12 14v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <span>Your verification code is encrypted in transit and never shared.</span>
+        </div>
+      </div>
+
+      <div id="modeQr" style="display:none;">
+        <div class="sectionTitle">QR verification</div>
+        <p class="help" style="margin-top:6px;">
+          If you later add QR verification: show a QR on the Figphone and scan it here.
+        </p>
+        <div class="scopes" style="margin-top:12px;">
+          <div class="scopeText" style="color: var(--muted);">
+            Placeholder panel — you can remove this mode if you don’t want QR.
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn btnGhost" type="button" onclick="setMode('code')">Back</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const codeInput = document.getElementById("codeInput");
+    const statusEl = document.getElementById("status");
+
+    function setMode(mode){
+      const tabCode = document.getElementById("tabCode");
+      const tabScan = document.getElementById("tabScan");
+      const modeCode = document.getElementById("modeCode");
+      const modeQr = document.getElementById("modeQr");
+
+      const isCode = mode === "code";
+      tabCode.classList.toggle("active", isCode);
+      tabScan.classList.toggle("active", !isCode);
+      modeCode.style.display = isCode ? "block" : "none";
+      modeQr.style.display = isCode ? "none" : "block";
+    }
+
+    // Auto-format XXXX-XXXX
+    codeInput?.addEventListener("input", () => {
+      let v = (codeInput.value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (v.length > 8) v = v.slice(0, 8);
+      if (v.length > 4) v = v.slice(0,4) + "-" + v.slice(4);
+      codeInput.value = v;
+      clearStatus();
+    });
+
+    function showStatus(msg, kind){
+      statusEl.textContent = msg;
+      statusEl.className = "status show" + (kind ? (" " + kind) : "");
+    }
+    function clearStatus(){
+      statusEl.className = "status";
+      statusEl.textContent = "";
+    }
+
+    function getCode(){
+      return (codeInput.value || "").trim().toUpperCase();
+    }
+
+    // TODO: wire to your backend
+    async function approveVerification(){
+      const code = getCode();
+      if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
+        showStatus("Please enter a valid code in the format XXXX-XXXX.", "error");
+        return;
+      }
+
+      showStatus("Verifying…", "");
+
+      try {
+        // Example placeholder:
+        // const res = await fetch("/api/calendar/verify", { method:"POST", headers:{...}, body: JSON.stringify({ code }) })
+        // const json = await res.json()
+        // if (!res.ok) throw new Error(json?.message || "Verification failed")
+
+        await new Promise(r => setTimeout(r, 700)); // fake delay
+
+        showStatus("Approved ✅ You can return to your Figphone.", "ok");
+      } catch (e) {
+        showStatus(String(e?.message || e), "error");
+      }
+    }
+
+    function cancelVerification(){
+      clearStatus();
+      codeInput.value = "";
+      showStatus("Cancelled. You can close this page.", "");
+    }
+  </script>
+</body>
+</html>

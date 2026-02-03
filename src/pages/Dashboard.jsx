@@ -20,43 +20,354 @@ import NewConversationModal from "../components/messages/NewConversationModal";
  */
 const WS_URL = "wss://is2qkmtavd.execute-api.us-east-1.amazonaws.com/production";
 
+function unwrapApi(resp) {
+  // supports axios (resp.data) OR your api wrapper that returns data directly
+  return resp?.data ?? resp;
+}
+
 function safeArray(resp) {
-  if (!resp) return [];
-  if (Array.isArray(resp)) return resp;
-  if (Array.isArray(resp?.Items)) return resp.Items;
-  if (Array.isArray(resp?.data)) return resp.data;
-  if (Array.isArray(resp?.data?.Items)) return resp.data.Items;
+  const d = unwrapApi(resp);
+  if (!d) return [];
+  if (Array.isArray(d)) return d;
+  if (Array.isArray(d?.Items)) return d.Items;
+  if (Array.isArray(d?.items)) return d.items;
+  if (Array.isArray(d?.data)) return d.data;
+  if (Array.isArray(d?.data?.Items)) return d.data.Items;
+  if (Array.isArray(d?.data?.items)) return d.data.items;
   return [];
 }
 
-function extractLastReadMap(readRows) {
-  // Accepts [{threadId,lastReadAt}] or {Items:[...]} from safeArray
-  const map = {};
-  for (const r of readRows) {
-    const tid = r.threadId || r.thread_id;
-    const t = r.lastReadAt || r.last_read_at;
-    if (tid && t) map[tid] = t;
+function getNextCursor(resp) {
+  const d = unwrapApi(resp);
+  return (
+    d?.nextCursor ||
+    d?.next_cursor ||
+    d?.cursor ||
+    d?.next ||
+    d?.LastEvaluatedKey ||
+    d?.lastEvaluatedKey ||
+    null
+  );
+}
+
+/**
+ * Robust timestamp -> epoch milliseconds.
+ */
+function toEpochMs(input) {
+  if (input == null) return Date.now();
+
+  if (typeof input === "number") {
+    return input < 1e12 ? input * 1000 : input;
   }
+
+  if (input instanceof Date) {
+    const t = input.getTime();
+    return Number.isFinite(t) ? t : Date.now();
+  }
+
+  if (typeof input === "string") {
+    const s = input.trim();
+    if (!s) return Date.now();
+
+    if (/^\d+$/.test(s)) {
+      const n = Number(s);
+      return n < 1e12 ? n * 1000 : n;
+    }
+
+    const t = Date.parse(s);
+    return Number.isFinite(t) ? t : Date.now();
+  }
+
+  return Date.now();
+}
+
+function toIsoFromMs(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return "";
+  try {
+    return new Date(ms).toISOString();
+  } catch {
+    return "";
+  }
+}
+
+function safeStr(x) {
+  return typeof x === "string" ? x : x == null ? "" : String(x);
+}
+
+function digitsOnly(x) {
+  return safeStr(x).replace(/\D/g, "");
+}
+
+/**
+ * ✅ Canonical phone key so:
+ * - "+212661..." and "0661..." become the SAME key
+ * - "+1XXXXXXXXXX" and "1XXXXXXXXXX" become same key (US)
+ *
+ * This is what prevents "same contact -> 2 convos".
+ */
+function canonicalPhoneKey(raw) {
+  let d = digitsOnly(raw);
+  if (!d) return "";
+
+  // handle 00 international prefix
+  if (d.startsWith("00")) d = d.slice(2);
+
+  // Morocco heuristics: country 212 + 9 digits OR local 0 + 9 digits
+  if (d.length === 12 && d.startsWith("212")) return d.slice(-9);
+  if (d.length === 10 && d.startsWith("0")) return d.slice(1);
+
+  // US heuristics
+  if (d.length === 11 && d.startsWith("1")) return d.slice(1);
+
+  // generic fallback: prefer last 10 if very long (common when country code included)
+  if (d.length > 10) return d.slice(-10);
+
+  return d;
+}
+
+/**
+ * Generate many lookup keys for a phone number.
+ * This makes contact resolution resilient even if stored formats differ.
+ */
+function phoneLookupKeys(raw) {
+  const keys = [];
+  const rawStr = safeStr(raw).trim();
+  if (!rawStr) return keys;
+
+  // from your existing normalizer (whatever it does in your project)
+  const n = normalizePhoneNumber(rawStr);
+  if (n) keys.push(n);
+
+  const d = digitsOnly(rawStr);
+  if (d) keys.push(d);
+
+  const c = canonicalPhoneKey(rawStr);
+  if (c) keys.push(c);
+
+  if (d && d.length >= 10) keys.push(d.slice(-10));
+  if (d && d.length >= 9) keys.push(d.slice(-9));
+
+  // also try variants from normalized value
+  if (n) {
+    const nd = digitsOnly(n);
+    if (nd) {
+      keys.push(nd);
+      const nc = canonicalPhoneKey(nd);
+      if (nc) keys.push(nc);
+      if (nd.length >= 10) keys.push(nd.slice(-10));
+      if (nd.length >= 9) keys.push(nd.slice(-9));
+    }
+  }
+
+  // unique
+  return Array.from(new Set(keys.filter(Boolean)));
+}
+
+// A “good enough” fingerprint for same-message dedupe.
+function messageFingerprint(m) {
+  const msgType = safeStr(m?.messageType || m?.message_messageType || m?.message_type).toUpperCase();
+  const dir = msgType === "SENT" ? "S" : "R";
+
+  const addr = canonicalPhoneKey(m?.address || m?.phone_number || "");
+  const body = safeStr(m?.body ?? m?.message_content ?? m?.text ?? m?.raw?.body ?? "").trim();
+
+  const atts = Array.isArray(m?.attachments) ? m.attachments : [];
+  const attSig = atts
+    .map((a) => safeStr(a?.s3Key || a?.s3_key || a?.key || a?.name || ""))
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(",");
+
+  const tsMs = toEpochMs(m?.timestamp || m?.date);
+  const bucket = Math.floor(tsMs / 5000); // 5s bucket
+
+  return `${dir}|${addr}|${body}|${attSig}|${bucket}`;
+}
+
+function dedupeMessagesArray(arr) {
+  const out = [];
+  const seenIds = new Set();
+  const seenFp = new Set();
+
+  for (const m of Array.isArray(arr) ? arr : []) {
+    const mid = m?.messageId || m?.id || null;
+    if (mid) {
+      const key = `id:${mid}`;
+      if (seenIds.has(key)) continue;
+      seenIds.add(key);
+      out.push(m);
+      continue;
+    }
+
+    const fp = `fp:${messageFingerprint(m)}`;
+    if (seenFp.has(fp)) continue;
+    seenFp.add(fp);
+    out.push(m);
+  }
+
+  return out;
+}
+
+function normalizeThreadIdKey(threadId) {
+  const s = String(threadId || "").trim();
+  if (!s) return "";
+  if (!s.includes("_")) return s;
+
+  const parts = s
+    .split("_")
+    .map((p) => canonicalPhoneKey(p) || normalizePhoneNumber(p) || digitsOnly(p))
+    .filter(Boolean)
+    .sort();
+
+  return parts.join("_");
+}
+
+function extractLastReadMap(readRows) {
+  const map = {};
+
+  const writeMax = (key, iso) => {
+    if (!key || !iso) return;
+    const incomingMs = toEpochMs(iso);
+    const existingIso = map[key];
+    const existingMs = existingIso ? toEpochMs(existingIso) : 0;
+    if (!existingMs || incomingMs > existingMs) {
+      map[key] = new Date(incomingMs).toISOString();
+    }
+  };
+
+  for (const r of readRows || []) {
+    const tidRaw = r.threadId ?? r.thread_id ?? r.threadKey ?? r.thread_key;
+    if (tidRaw == null) continue;
+
+    const rawKey = String(tidRaw);
+    const normalizedKey = normalizeThreadIdKey(rawKey);
+
+    const msRaw =
+      r.lastReadAtMs ??
+      r.last_read_at_ms ??
+      r.lastReadMs ??
+      r.last_read_ms ??
+      null;
+
+    if (msRaw != null) {
+      const iso = toIsoFromMs(Number(msRaw));
+      writeMax(rawKey, iso);
+      writeMax(normalizedKey, iso);
+      continue;
+    }
+
+    const isoRaw =
+      r.lastReadAt ??
+      r.last_read_at ??
+      r.lastReadAtIso ??
+      r.last_read_at_iso ??
+      null;
+
+    if (isoRaw) {
+      const iso = new Date(toEpochMs(isoRaw)).toISOString();
+      writeMax(rawKey, iso);
+      writeMax(normalizedKey, iso);
+    }
+  }
+
   return map;
 }
 
 function extractIdToken(session) {
-  // Amplify v6 fetchAuthSession returns tokens in different shapes depending on config.
-  // We try the common ones.
   const tokens = session?.tokens;
-  const idToken =
-    tokens?.idToken?.toString?.() ||
-    tokens?.idToken ||
-    session?.idToken ||
-    null;
-
+  const idToken = tokens?.idToken?.toString?.() || tokens?.idToken || session?.idToken || null;
   return typeof idToken === "string" ? idToken : null;
+}
+
+function mergeReadMaps(prev, incoming) {
+  const out = { ...prev };
+
+  for (const [rawKey, isoRaw] of Object.entries(incoming || {})) {
+    const ms = toEpochMs(isoRaw);
+    const iso = new Date(ms).toISOString();
+
+    const k1 = String(rawKey);
+    const k2 = normalizeThreadIdKey(rawKey);
+
+    for (const k of [k1, k2]) {
+      if (!k) continue;
+      const existingIso = out[k];
+      const existingMs = existingIso ? toEpochMs(existingIso) : 0;
+      if (!existingMs || ms > existingMs) out[k] = iso;
+    }
+  }
+
+  return out;
+}
+
+function resolveLastReadIso(threadReads, threadId, message) {
+  const keys = [];
+
+  const rawTid = threadId != null ? String(threadId) : "";
+  if (rawTid) keys.push(rawTid);
+
+  const normalizedTid = rawTid ? normalizeThreadIdKey(rawTid) : "";
+  if (normalizedTid && normalizedTid !== rawTid) keys.push(normalizedTid);
+
+  const msgThreadId =
+    message?.threadId ??
+    message?.thread_id ??
+    message?.raw?.threadId ??
+    message?.raw?.thread_id;
+
+  if (msgThreadId != null) keys.push(String(msgThreadId));
+
+  if (message?.address) keys.push(String(message.address));
+  if (message?.raw?.address) keys.push(String(message.raw.address));
+
+  // also try canonical phone forms
+  if (message?.address) keys.push(canonicalPhoneKey(message.address));
+  if (message?.raw?.address) keys.push(canonicalPhoneKey(message.raw.address));
+
+  for (const k of keys) {
+    if (!k) continue;
+    const iso = threadReads?.[k];
+    if (iso) return iso;
+  }
+  return null;
+}
+
+function computeDisplayBody(message) {
+  const raw = message || {};
+  const atts = Array.isArray(raw.attachments) ? raw.attachments : [];
+
+  const kind = String(raw.kind || "").toLowerCase();
+  const isMms =
+    kind === "mms" ||
+    atts.length > 0 ||
+    raw.msg_box != null ||
+    raw.thread_id != null;
+
+  const body =
+    (typeof raw.body === "string" && raw.body) ||
+    (typeof raw.message_content === "string" && raw.message_content) ||
+    "";
+
+  const text = (typeof raw.text === "string" && raw.text) || "";
+
+  if (isMms) {
+    const t = text.trim();
+    if (t) return t;
+
+    const b = body.trim();
+    if (b && b !== "[MMS]") return b;
+
+    // don’t force "[MMS]" as last_message preview
+    return b === "[MMS]" ? "" : b;
+  }
+
+  return body;
 }
 
 export default function DashboardPage() {
   const [messages, setMessages] = useState([]);
   const [contacts, setContacts] = useState([]);
-  const [threadReads, setThreadReads] = useState({}); // { [threadId]: lastReadAtISO }
+  const [threadReads, setThreadReads] = useState({});
 
   const [selectedThreadId, setSelectedThreadId] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -67,11 +378,20 @@ export default function DashboardPage() {
   const [isNewConversationModalOpen, setIsNewConversationModalOpen] = useState(false);
   const [ephemeralConversations, setEphemeralConversations] = useState({});
 
-  // --- WS refs/state ---
+  // progressive loading status
+  const [messagesLoadInfo, setMessagesLoadInfo] = useState({ loading: false, loaded: 0, error: "" });
+
+  // WS refs/state
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
   const reconnectAttemptRef = useRef(0);
   const isUnmountingRef = useRef(false);
+
+  // Keep latest reads in a ref to debounce markThreadRead without dependency loops
+  const threadReadsRef = useRef(threadReads);
+  useEffect(() => {
+    threadReadsRef.current = threadReads;
+  }, [threadReads]);
 
   useEffect(() => {
     loadInitialData();
@@ -79,9 +399,9 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    // connect WS once we know we have a user (or at least are logged in)
     if (!currentUser) return;
     connectWs();
+
     return () => {
       isUnmountingRef.current = true;
       cleanupWs();
@@ -114,17 +434,20 @@ export default function DashboardPage() {
     const attempt = Math.min(reconnectAttemptRef.current + 1, 8);
     reconnectAttemptRef.current = attempt;
 
-    // backoff: 1s, 2s, 4s ... max ~20s
     const delay = Math.min(1000 * Math.pow(2, attempt - 1), 20000);
-
     console.log(`[WS] scheduling reconnect in ${delay}ms (attempt ${attempt})`);
+
     reconnectTimerRef.current = setTimeout(() => {
       connectWs();
     }, delay);
   };
 
   const connectWs = async () => {
-    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
+    if (
+      wsRef.current &&
+      (wsRef.current.readyState === WebSocket.OPEN ||
+        wsRef.current.readyState === WebSocket.CONNECTING)
+    ) {
       return;
     }
 
@@ -148,7 +471,6 @@ export default function DashboardPage() {
           return;
         }
 
-        // route selection expression is $request.body.action
         ws.send(JSON.stringify({ action: "auth", token: idToken }));
       } catch (e) {
         console.error("[WS] auth send failed:", e);
@@ -159,30 +481,34 @@ export default function DashboardPage() {
     ws.onmessage = (evt) => {
       try {
         const payload = JSON.parse(evt.data);
-        // console.log("[WS] message:", payload);
 
         if (payload?.type === "MESSAGE_NEW" && payload?.message) {
           const m = payload.message;
 
-          // Normalize to the same shape as /messages returns
           const normalized = {
             ...m,
             body: m.body ?? m.message_content ?? "",
+            text: m.text ?? "",
+            kind: m.kind ?? "",
+            attachments: Array.isArray(m.attachments) ? m.attachments : [],
             address: m.address ?? "",
             timestamp: m.timestamp ?? new Date().toISOString(),
-            messageType: (m.messageType || m.message_type || "RECEIVED").toString().toUpperCase(),
+            messageType: (m.messageType || m.message_type || "RECEIVED")
+              .toString()
+              .toUpperCase(),
             messageId: m.messageId || m.id || null,
           };
 
-          // Update messages state (dedupe by messageId if present)
           setMessages((prev) => {
-            if (normalized.messageId && prev.some((x) => x.messageId === normalized.messageId)) {
-              return prev;
-            }
+            const mid = normalized.messageId || null;
+            const fp = messageFingerprint(normalized);
+
+            if (mid && prev.some((x) => (x.messageId || x.id) === mid)) return prev;
+            if (prev.some((x) => messageFingerprint(x) === fp)) return prev;
+
             return [...prev, normalized];
           });
 
-          // If user is currently viewing this thread, mark as read immediately
           const incoming = normalized.messageType !== "SENT";
           const threadId = normalized.threadId || payload.threadId;
           if (incoming && threadId && threadId === selectedThreadId) {
@@ -190,11 +516,31 @@ export default function DashboardPage() {
           }
         }
 
-        if (payload?.type === "THREAD_READ" && payload?.threadId && payload?.lastReadAt) {
-          setThreadReads((prev) => ({
-            ...prev,
-            [payload.threadId]: payload.lastReadAt,
-          }));
+        if (payload?.type === "THREAD_READ" && payload?.threadId) {
+          const rawTid = String(payload.threadId);
+          const normalizedTid = normalizeThreadIdKey(rawTid);
+
+          const applyRead = (iso) => {
+            if (!iso) return;
+            setThreadReads((prev) => ({
+              ...prev,
+              [rawTid]: iso,
+              [normalizedTid]: iso,
+            }));
+          };
+
+          if (payload.lastReadAtMs != null) {
+            const ms = Number(payload.lastReadAtMs);
+            const iso = toIsoFromMs(ms);
+            applyRead(iso);
+            return;
+          }
+
+          if (payload.lastReadAt) {
+            const ms = toEpochMs(payload.lastReadAt);
+            const iso = new Date(ms).toISOString();
+            applyRead(iso);
+          }
         }
       } catch (e) {
         console.warn("[WS] parse error:", e);
@@ -211,30 +557,66 @@ export default function DashboardPage() {
     };
   };
 
+  // paged /messages fetch
+  const fetchMessagesPaged = useCallback(async () => {
+    const LIMIT = 200;
+    const MAX_PAGES = 200;     // safety
+    const MAX_ITEMS = 20000;   // safety
+
+    let cursor = null;
+    let page = 0;
+    let all = [];
+
+    setMessagesLoadInfo({ loading: true, loaded: 0, error: "" });
+
+    while (page < MAX_PAGES && all.length < MAX_ITEMS) {
+      page += 1;
+
+      let resp;
+      try {
+        resp = await api.get("/messages", {
+          params: {
+            limit: LIMIT,
+            cursor: cursor || undefined,
+          },
+        });
+      } catch (e) {
+        console.warn("[messages] page fetch failed, will fallback:", e);
+        throw e;
+      }
+
+      const items = safeArray(resp);
+      const next = getNextCursor(resp);
+
+      if (items.length) {
+        all = dedupeMessagesArray([...all, ...items]);
+        setMessages(all); // show conversations as soon as possible
+        setMessagesLoadInfo({ loading: true, loaded: all.length, error: "" });
+      }
+
+      if (!next || items.length === 0) break;
+
+      cursor = typeof next === "string" ? next : JSON.stringify(next);
+    }
+
+    setMessagesLoadInfo({ loading: false, loaded: all.length, error: "" });
+    return all;
+  }, []);
+
   const loadInitialData = async () => {
     setIsLoading(true);
     try {
-      // Current user
       const current = await getCurrentUser();
 
-      // This is how your existing code was doing it:
       const phoneFromAttributes = current?.attributes?.phone_number;
       const phoneFromLoginId = current?.signInDetails?.loginId;
 
-      const user = { phone_number: phoneFromAttributes || phoneFromLoginId || "" };
+      const user = {
+        phone_number: phoneFromAttributes || phoneFromLoginId || "",
+      };
       setCurrentUser(user);
 
-      // Fetch messages
-      let messagesArray = [];
-      try {
-        const fetchedMessages = await api.get("/messages");
-        messagesArray = safeArray(fetchedMessages);
-      } catch (err) {
-        console.error("Error fetching /messages:", err);
-        messagesArray = [];
-      }
-
-      // Fetch contacts
+      // contacts
       let contactsArray = [];
       try {
         const fetchedContacts = await api.get("/contacts");
@@ -244,7 +626,7 @@ export default function DashboardPage() {
         contactsArray = [];
       }
 
-      // Fetch thread read cursors (new)
+      // reads
       let readsArray = [];
       try {
         const fetchedReads = await api.get("/threads/read");
@@ -254,18 +636,38 @@ export default function DashboardPage() {
         readsArray = [];
       }
 
-      setMessages(messagesArray);
       setContacts(
-        contactsArray.sort((a, b) =>
-          (a.full_name || "").localeCompare(b.full_name || "")
-        )
+        contactsArray.sort((a, b) => (a.full_name || "").localeCompare(b.full_name || ""))
       );
       setThreadReads(extractLastReadMap(readsArray));
+
+      // messages
+      try {
+        await fetchMessagesPaged();
+      } catch (err) {
+        console.error("Error fetching /messages paged (fallback to plain):", err);
+        setMessagesLoadInfo((prev) => ({
+          ...prev,
+          error: "Messages download failed (payload too large). Using fallback…",
+        }));
+
+        try {
+          const fetchedMessages = await api.get("/messages");
+          const messagesArray = safeArray(fetchedMessages);
+          setMessages(dedupeMessagesArray(messagesArray));
+          setMessagesLoadInfo({ loading: false, loaded: messagesArray.length, error: "" });
+        } catch (e2) {
+          console.error("Error fetching /messages fallback:", e2);
+          setMessages([]);
+          setMessagesLoadInfo({ loading: false, loaded: 0, error: "Messages failed to load." });
+        }
+      }
     } catch (error) {
       console.error("Error in loadInitialData wrapper:", error);
       setMessages([]);
       setContacts([]);
       setThreadReads({});
+      setMessagesLoadInfo({ loading: false, loaded: 0, error: "Failed to load initial data." });
     } finally {
       setIsLoading(false);
     }
@@ -276,103 +678,313 @@ export default function DashboardPage() {
     setEphemeralConversations({});
   };
 
-  const markThreadRead = useCallback(
-    async (threadId, lastMessageTimestamp) => {
-      if (!threadId) return;
+  // Poll reads so web stays in sync even if WS never emits THREAD_READ
+  const refreshThreadReads = useCallback(async () => {
+    try {
+      const fetchedReads = await api.get("/threads/read");
+      const readsArray = safeArray(fetchedReads);
+      const map = extractLastReadMap(readsArray);
 
-      // Optimistic local update first (keeps UI snappy)
-      const optimistic = lastMessageTimestamp || new Date().toISOString();
-      setThreadReads((prev) => ({ ...prev, [threadId]: optimistic }));
+      setThreadReads((prev) => mergeReadMaps(prev, map));
+    } catch (e) {
+      console.error("[reads] refreshThreadReads failed:", e);
+    }
+  }, []);
 
-      try {
-        const resp = await api.post("/threads/read", {
-          threadId,
-          lastMessageTimestamp: optimistic,
-        });
+  useEffect(() => {
+    if (!currentUser) return;
 
-        const lastReadAt =
-          resp?.lastReadAt ||
-          resp?.data?.lastReadAt ||
-          optimistic;
+    const intervalId = setInterval(() => {
+      refreshThreadReads();
+    }, 3000);
 
-        setThreadReads((prev) => ({ ...prev, [threadId]: lastReadAt }));
-      } catch (e) {
-        console.error("markThreadRead failed:", e);
+    const onVis = () => {
+      if (document.visibilityState === "visible") refreshThreadReads();
+    };
+    document.addEventListener("visibilitychange", onVis);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [currentUser?.phone_number, refreshThreadReads]);
+
+  const markThreadRead = useCallback(async (threadId, lastMessageTimestamp) => {
+    if (!threadId) return;
+
+    const lastReadAtMs = toEpochMs(lastMessageTimestamp);
+
+    const rawTid = String(threadId);
+    const normalizedTid = normalizeThreadIdKey(rawTid);
+
+    const existingIso =
+      threadReadsRef.current?.[rawTid] || threadReadsRef.current?.[normalizedTid];
+    const existingMs = existingIso ? toEpochMs(existingIso) : 0;
+    if (existingMs && lastReadAtMs <= existingMs) return;
+
+    const optimisticIso = new Date(lastReadAtMs).toISOString();
+    setThreadReads((prev) => ({
+      ...prev,
+      [rawTid]: optimisticIso,
+      [normalizedTid]: optimisticIso,
+    }));
+
+    try {
+      await api.post("/threads/read", {
+        threadId: rawTid,
+        threadKey: normalizedTid,
+        lastReadAtMs,
+        origin: "web",
+      });
+    } catch (e) {
+      console.error("markThreadRead failed:", e);
+    }
+  }, []);
+
+  /**
+   * ✅ BIG FIX: Build a contact index that supports many phone variants.
+   * This prevents:
+   * - "same contact appears twice"
+   * - "sometimes name is blank"
+   */
+  const contactsIndex = useMemo(() => {
+    const map = new Map();
+
+    const getName = (c) =>
+      c?.full_name || c?.contact_name || c?.name || c?.display_name || "";
+
+    const extractNumbers = (c) => {
+      const nums = [];
+
+      const push = (v) => {
+        const s = safeStr(v).trim();
+        if (s) nums.push(s);
+      };
+
+      push(c?.phone_number);
+      push(c?.phoneNumber);
+
+      const tryArrayField = (field) => {
+        if (Array.isArray(field)) {
+          field.forEach((x) => {
+            if (typeof x === "string") return push(x);
+            if (x && typeof x === "object") push(x.number || x.phone_number || x.phone || x.value);
+          });
+        } else if (typeof field === "string") {
+          push(field);
+        }
+      };
+
+      tryArrayField(c?.phone_numbers);
+      tryArrayField(c?.phoneNumbers);
+      tryArrayField(c?.numbers);
+      tryArrayField(c?.phones);
+      tryArrayField(c?.phone_list);
+      tryArrayField(c?.phoneList);
+      tryArrayField(c?.raw?.phones);
+      tryArrayField(c?.raw?.numbers);
+
+      return Array.from(new Set(nums));
+    };
+
+    for (const c of Array.isArray(contacts) ? contacts : []) {
+      const name = getName(c);
+      const numbers = extractNumbers(c);
+      if (!numbers.length) continue;
+
+      // pick a canonical number for the contact (stable thread key)
+      const canonical =
+        canonicalPhoneKey(numbers[0]) ||
+        canonicalPhoneKey(normalizePhoneNumber(numbers[0])) ||
+        digitsOnly(numbers[0]) ||
+        normalizePhoneNumber(numbers[0]) ||
+        numbers[0];
+
+      const displayNumber = normalizePhoneNumber(numbers[0]) || numbers[0];
+
+      const entry = { contact: c, canonicalKey: canonical, displayNumber };
+
+      for (const num of numbers) {
+        for (const k of phoneLookupKeys(num)) {
+          const existing = map.get(k);
+          // prefer entries that actually have a name
+          if (!existing) {
+            map.set(k, entry);
+          } else {
+            const existingName = getName(existing.contact);
+            if (!existingName && name) map.set(k, entry);
+          }
+        }
       }
+
+      // also map the canonical key itself
+      if (canonical) {
+        const existing = map.get(canonical);
+        if (!existing) map.set(canonical, entry);
+        else {
+          const existingName = getName(existing.contact);
+          if (!existingName && name) map.set(canonical, entry);
+        }
+      }
+    }
+
+    return map;
+  }, [contacts]);
+
+  const lookupContact = useCallback(
+    (addressRaw) => {
+      const keys = phoneLookupKeys(addressRaw);
+      for (const k of keys) {
+        const hit = contactsIndex.get(k);
+        if (hit) return hit;
+      }
+      // also try canonical-only as last resort
+      const canon = canonicalPhoneKey(addressRaw);
+      if (canon) return contactsIndex.get(canon) || null;
+      return null;
     },
-    []
+    [contactsIndex]
   );
+
+  const canonicalMeKey = useMemo(() => {
+    const myRawPhone = currentUser?.phone_number || currentUser?.phoneNumber || "";
+    return (
+      canonicalPhoneKey(myRawPhone) ||
+      canonicalPhoneKey(normalizePhoneNumber(myRawPhone)) ||
+      digitsOnly(myRawPhone) ||
+      normalizePhoneNumber(myRawPhone) ||
+      safeStr(myRawPhone)
+    );
+  }, [currentUser]);
 
   // Build conversations from messages + contacts
   const conversations = useMemo(() => {
     if (!Array.isArray(messages) || !currentUser) return {};
 
     return messages.reduce((acc, message) => {
-      const myRawPhone = currentUser.phone_number || currentUser.phoneNumber || "";
-      const normalizedMe = normalizePhoneNumber(myRawPhone);
-      const normalizedAddress = normalizePhoneNumber(message.address);
+      const addrRaw =
+        message?.address ??
+        message?.phone_number ??
+        message?.raw?.address ??
+        message?.raw?.phone_number ??
+        "";
 
-      if (!normalizedAddress && !normalizedMe) return acc;
+      const hit = lookupContact(addrRaw);
+      const contact = hit?.contact || null;
 
-      // Thread id logic (same as your current logic)
+      const remoteKey =
+        hit?.canonicalKey ||
+        canonicalPhoneKey(addrRaw) ||
+        canonicalPhoneKey(normalizePhoneNumber(addrRaw)) ||
+        digitsOnly(addrRaw) ||
+        normalizePhoneNumber(addrRaw) ||
+        safeStr(addrRaw);
+
+      // if we have no remote key at all, skip
+      if (!remoteKey && !canonicalMeKey) return acc;
+
       let threadId;
-      if (normalizedMe) {
-        const participants = [normalizedMe, normalizedAddress].filter(Boolean).sort();
+      if (canonicalMeKey) {
+        const participants = [canonicalMeKey, remoteKey].filter(Boolean).sort();
         threadId = participants.join("_");
       } else {
-        threadId = normalizedAddress || message.address || "unknown";
+        threadId = remoteKey || safeStr(addrRaw) || "unknown";
       }
 
       if (!acc[threadId]) {
-        const contact = contacts.find(
-          (c) => normalizePhoneNumber(c.phone_number) === normalizedAddress
-        );
+        const contactName =
+          contact?.full_name ||
+          contact?.contact_name ||
+          contact?.name ||
+          contact?.display_name ||
+          "";
+
+        const displayNumber =
+          hit?.displayNumber || normalizePhoneNumber(addrRaw) || safeStr(addrRaw);
 
         acc[threadId] = {
           thread_id: threadId,
-          contact_name: contact?.full_name || message.address,
-          phone_number: normalizedAddress || message.address,
+          contact_name: contactName || displayNumber,
+          phone_number: displayNumber,
           messages: [],
           last_message: null,
           unread_count: 0,
           is_group: message.is_group || false,
         };
+      } else {
+        // ✅ If this thread was created earlier without name, upgrade it when contact resolves
+        const existing = acc[threadId];
+        const contactName =
+          contact?.full_name ||
+          contact?.contact_name ||
+          contact?.name ||
+          contact?.display_name ||
+          "";
+        if (contactName && (existing.contact_name === existing.phone_number || !existing.contact_name)) {
+          existing.contact_name = contactName;
+        }
       }
 
       const msgType = (message.messageType || "").toString().toUpperCase();
       const isSent = msgType === "SENT";
-
       const timestamp = message.timestamp || message.date || new Date().toISOString();
 
-      // Keep a copy of raw server message for dedupe/keys if needed
+      const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+      const kind = message.kind || "";
+      const text = message.text || "";
+      const isMms =
+        String(kind).toLowerCase() === "mms" ||
+        attachments.length > 0 ||
+        message.msg_box != null;
+
+      const displayBody = computeDisplayBody(message);
+
       acc[threadId].messages.push({
         id: message.messageId || timestamp,
         messageId: message.messageId || message.id || null,
-        message_content: message.body,
+        message_content: displayBody,
         timestamp,
         is_sent: isSent,
         sync_status: "synced",
+
+        is_mms: isMms,
+        kind,
+        text,
+        attachments,
+
         raw: message,
       });
 
-      // --- UNREAD LOGIC using per-thread read cursor ---
-      const lastReadAt = threadReads[threadId];
-      const lastReadTime = lastReadAt ? new Date(lastReadAt).getTime() : 0;
-      const msgTime = new Date(timestamp).getTime();
-
+      // UNREAD LOGIC
+      const msgMs = toEpochMs(timestamp);
       const isIncoming = !isSent;
-      const isUnreadByCursor = isIncoming && msgTime > lastReadTime;
 
-      if (isUnreadByCursor) acc[threadId].unread_count += 1;
-      // -----------------------------------------------
+      const readFlag =
+        typeof message.read === "boolean"
+          ? message.read
+          : typeof message.is_read === "boolean"
+          ? message.is_read
+          : null;
+
+      const lastReadAtIso = resolveLastReadIso(threadReads, threadId, message);
+      const lastReadMs = lastReadAtIso ? toEpochMs(lastReadAtIso) : 0;
+
+      let isUnread = false;
+      if (readFlag === true) {
+        isUnread = false;
+      } else {
+        isUnread = isIncoming && msgMs > lastReadMs;
+      }
+
+      if (isUnread) acc[threadId].unread_count += 1;
 
       const existingLast = acc[threadId].last_message;
-      const existingTs = existingLast ? new Date(existingLast.timestamp) : new Date(0);
+      const existingMs = existingLast ? toEpochMs(existingLast.timestamp) : 0;
 
-      if (!existingLast || new Date(timestamp) > existingTs) {
+      if (!existingLast || msgMs > existingMs) {
         acc[threadId].last_message = {
           ...message,
-          message_content: message.body,
+          message_content: displayBody,
           is_sent: isSent,
           timestamp,
         };
@@ -380,7 +992,7 @@ export default function DashboardPage() {
 
       return acc;
     }, {});
-  }, [messages, contacts, currentUser, threadReads]);
+  }, [messages, currentUser, threadReads, canonicalMeKey, lookupContact]);
 
   const allConversations = useMemo(() => {
     const merged = { ...conversations, ...ephemeralConversations };
@@ -423,19 +1035,34 @@ export default function DashboardPage() {
   const handleStartConversation = (recipient) => {
     if (!currentUser || !recipient.phone_number) return;
 
-    const participants = [
-      currentUser.phone_number || currentUser.phoneNumber,
-      recipient.phone_number,
-    ].filter(Boolean).sort();
+    const meRaw = currentUser.phone_number || currentUser.phoneNumber || "";
+    const otherRaw = recipient.phone_number;
 
+    const meKey =
+      canonicalPhoneKey(meRaw) ||
+      canonicalPhoneKey(normalizePhoneNumber(meRaw)) ||
+      digitsOnly(meRaw) ||
+      normalizePhoneNumber(meRaw) ||
+      meRaw;
+
+    const otherKey =
+      canonicalPhoneKey(otherRaw) ||
+      canonicalPhoneKey(normalizePhoneNumber(otherRaw)) ||
+      digitsOnly(otherRaw) ||
+      normalizePhoneNumber(otherRaw) ||
+      otherRaw;
+
+    const participants = [meKey, otherKey].filter(Boolean).sort();
     const newThreadId = participants.join("_");
 
     if (!allConversations[newThreadId]) {
+      const name = recipient.contact_name || recipient.full_name || recipient.name || "";
+
       const newPlaceholder = {
         thread_id: newThreadId,
-        contact_name: recipient.contact_name,
-        phone_number: recipient.phone_number,
-        display_name: recipient.contact_name || recipient.phone_number,
+        contact_name: name || (normalizePhoneNumber(otherRaw) || otherRaw),
+        phone_number: normalizePhoneNumber(otherRaw) || otherRaw,
+        display_name: name || (normalizePhoneNumber(otherRaw) || otherRaw),
         messages: [],
         is_group: false,
         last_message: null,
@@ -451,7 +1078,6 @@ export default function DashboardPage() {
     setSelectedThreadId(newThreadId);
     setIsNewConversationModalOpen(false);
 
-    // Mark as read when opening
     const lastTs = allConversations[newThreadId]?.last_message?.timestamp;
     markThreadRead(newThreadId, lastTs || new Date().toISOString());
   };
@@ -462,7 +1088,6 @@ export default function DashboardPage() {
     const conv = allConversations[threadId];
     const lastTs = conv?.last_message?.timestamp;
 
-    // Mark read on open
     markThreadRead(threadId, lastTs || new Date().toISOString());
   };
 
@@ -501,6 +1126,17 @@ export default function DashboardPage() {
                 className="pl-10 rounded-full border-slate-200 h-12 bg-slate-50 focus:bg-white"
               />
             </div>
+
+            {(messagesLoadInfo.loading || messagesLoadInfo.error) && (
+              <div className="mt-3 text-xs text-slate-500">
+                {messagesLoadInfo.loading ? (
+                  <div>Loading messages… ({messagesLoadInfo.loaded} loaded)</div>
+                ) : null}
+                {messagesLoadInfo.error ? (
+                  <div className="text-amber-600">{messagesLoadInfo.error}</div>
+                ) : null}
+              </div>
+            )}
           </div>
 
           <SecurityBanner currentUser={currentUser} />
@@ -533,15 +1169,52 @@ export default function DashboardPage() {
                 const lastTs = selectedConversation?.last_message?.timestamp;
                 markThreadRead(threadId, lastTs || new Date().toISOString());
               }}
-              // optional hook if your MessageThread uses it
               onMessageSent={(serverItem) => {
-                if (!serverItem) return;
-                setMessages((prev) => {
-                  const mid = serverItem.messageId || serverItem.id;
-                  if (mid && prev.some((x) => x.messageId === mid)) return prev;
-                  return [...prev, { ...serverItem, messageId: mid }];
-                });
-              }}
+  if (!serverItem) return;
+
+  // ✅ Always tie it to the currently open conversation
+  const fallbackAddress =
+    selectedConversation?.phone_number ||
+    selectedConversation?.phoneNumber ||
+    "";
+
+  const fallbackThreadId = selectedConversation?.thread_id || serverItem.threadId || serverItem.thread_id;
+
+  setMessages((prev) => {
+    const mid = serverItem.messageId || serverItem.id || null;
+
+    const candidate = {
+      // normalize to your message shape used by the reducer
+      messageId: mid,
+      id: mid || `web-${Date.now()}`,
+      threadId: fallbackThreadId,
+
+      address: serverItem.address || serverItem.to || fallbackAddress,
+      messageType: (serverItem.messageType || serverItem.message_type || "SENT")
+        .toString()
+        .toUpperCase(),
+
+      body: serverItem.body ?? serverItem.message_content ?? "",
+      message_content: serverItem.body ?? serverItem.message_content ?? "",
+
+      timestamp: serverItem.timestamp || new Date().toISOString(),
+      kind: serverItem.kind || "",
+      text: serverItem.text || "",
+      attachments: Array.isArray(serverItem.attachments) ? serverItem.attachments : [],
+    };
+
+    if (mid && prev.some((x) => (x.messageId || x.id) === mid)) return prev;
+
+    const fp = messageFingerprint(candidate);
+    if (prev.some((x) => messageFingerprint(x) === fp)) return prev;
+
+    return [...prev, candidate];
+  });
+}}
+
+              onLoadOlder={null}
+              hasMore={false}
+              isLoadingThread={false}
             />
           ) : (
             <div className="flex-1 flex items-center justify-center bg-slate-50">
@@ -559,18 +1232,6 @@ export default function DashboardPage() {
                 <p className="max-w-sm text-slate-600">
                   Choose a conversation from the list to view your synced messages
                 </p>
-
-                <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg max-w-md mx-auto">
-                  <div className="flex items-center justify-center gap-2 mb-2">
-                    <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-                    <span className="text-sm font-medium text-green-800">
-                      Real-time connected
-                    </span>
-                  </div>
-                  <p className="text-xs text-green-600">
-                    Messages update instantly • Keep your phone connected.
-                  </p>
-                </div>
               </motion.div>
             </div>
           )}

@@ -16,6 +16,7 @@ import Dashboard from "./Dashboard";
 import SyncStatus from "./SyncStatus";
 import Settings from "./Settings";
 import Photos from "./Photos";
+import MusicPage from "./Music";
 import Contacts from "./Contacts";
 import ReverseSync from "./ReverseSync";
 import FindPhone from "./FindPhone";
@@ -87,6 +88,7 @@ function PagesContent({ signOut }) {
         <Route path="/SyncStatus" element={<SyncStatus />} />
         <Route path="/Settings" element={<Settings />} />
         <Route path="/Photos" element={<Photos />} />
+        <Route path="/Music" element={<MusicPage />} />
         <Route path="/Contacts" element={<Contacts />} />
         <Route path="/ReverseSync" element={<ReverseSync />} />
         <Route path="/FindPhone" element={<FindPhone />} />
