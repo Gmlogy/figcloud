@@ -143,6 +143,41 @@
     }
     .scopeText b{ color: #111827; }
 
+    /* ✅ Terms acceptance box */
+    .tos {
+      margin-top: 16px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      background: #fbfbfb;
+      border-radius: 14px;
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+
+    .tos input[type="checkbox"]{
+      margin-top: 3px;
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent);
+      flex: 0 0 auto;
+    }
+
+    .tosLabel{
+      font-size: 14px;
+      color: #374151;
+      line-height: 1.35;
+    }
+
+    .tosLabel a{
+      color: var(--accent-2);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .tosLabel a:hover{
+      opacity: .9;
+    }
+
     .actions{
       display: grid;
       gap: 10px;
@@ -259,6 +294,17 @@
           </div>
         </div>
 
+        <!-- ✅ Terms checkbox (required) -->
+        <div class="tos">
+          <input id="acceptTos" type="checkbox" />
+          <label class="tosLabel" for="acceptTos">
+            I accept the
+            <a href="https://figkosher.com/62184063161/policies/27542618297.html?locale=en" target="_blank" rel="noopener noreferrer">Terms of Service</a>
+            &amp;
+            <a href="https://figkosher.com/62184063161/policies/27542585529.html?locale=en" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.
+          </label>
+        </div>
+
         <div class="actions">
           <button id="approveBtn" class="btn btnPrimary" type="button">
             Approve connection →
@@ -293,6 +339,7 @@
   const statusEl = document.getElementById("status");
   const approveBtn = document.getElementById("approveBtn");
   const cancelBtn = document.getElementById("cancelBtn");
+  const acceptTos = document.getElementById("acceptTos");
 
   // Debug: if you don't see this in console, you're not serving the updated file
   console.log("[login] page script loaded v2", { API_BASE, ENDPOINT_POLL });
@@ -309,6 +356,7 @@
     approveBtn.disabled = !!busy;
     cancelBtn.disabled = !!busy;
     codeInput.disabled = !!busy;
+    acceptTos.disabled = !!busy;
     approveBtn.textContent = busy ? "Verifying…" : "Approve connection →";
   }
 
@@ -323,12 +371,22 @@
     return normalizeCode(codeInput.value);
   }
 
+  function requireAcceptance(){
+    if (!acceptTos?.checked) {
+      showStatus("Please accept the Terms of Service & Privacy Policy to continue.", "error");
+      return false;
+    }
+    return true;
+  }
+
   codeInput.addEventListener("input", () => {
     codeInput.value = String(codeInput.value || "")
       .toUpperCase()
       .replace(/[^A-Z0-9\- ]/g, "");
     clearStatus();
   });
+
+  acceptTos.addEventListener("change", () => clearStatus());
 
   codeInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") approveVerification();
@@ -346,6 +404,8 @@
 
   async function approveVerification(){
     const userCode = getCode();
+
+    if (!requireAcceptance()) return;
 
     if (!/^[A-Z0-9]{6}$/.test(userCode)) {
       showStatus("Please enter the 6-character code shown on your Figphone (example: ABC123).", "error");
@@ -405,6 +465,7 @@
   function cancelVerification(){
     clearStatus();
     codeInput.value = "";
+    if (acceptTos) acceptTos.checked = false;
     showStatus("Cancelled. You can close this page.", "");
   }
 </script>
