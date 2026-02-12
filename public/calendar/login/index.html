@@ -306,7 +306,8 @@
         </div>
 
         <div class="actions">
-          <button id="approveBtn" class="btn btnPrimary" type="button">
+          <!-- ✅ Disabled by default; enabled only if checkbox is checked -->
+          <button id="approveBtn" class="btn btnPrimary" type="button" disabled>
             Approve connection →
           </button>
           <button id="cancelBtn" class="btn btnGhost" type="button">
@@ -342,7 +343,7 @@
   const acceptTos = document.getElementById("acceptTos");
 
   // Debug: if you don't see this in console, you're not serving the updated file
-  console.log("[login] page script loaded v2", { API_BASE, ENDPOINT_POLL });
+  console.log("[login] page script loaded v3", { API_BASE, ENDPOINT_POLL });
 
   function showStatus(msg, kind){
     statusEl.textContent = msg;
@@ -352,8 +353,16 @@
     statusEl.className = "status";
     statusEl.textContent = "";
   }
+
+  // ✅ Enable/disable approve button based on checkbox state
+  function syncApproveEnabled(){
+    approveBtn.disabled = !acceptTos.checked;
+  }
+
   function setBusy(busy){
-    approveBtn.disabled = !!busy;
+    // ✅ Approve depends on BOTH: not busy AND checkbox checked
+    approveBtn.disabled = !!busy || !acceptTos.checked;
+
     cancelBtn.disabled = !!busy;
     codeInput.disabled = !!busy;
     acceptTos.disabled = !!busy;
@@ -386,7 +395,11 @@
     clearStatus();
   });
 
-  acceptTos.addEventListener("change", () => clearStatus());
+  // ✅ Toggle approve button on checkbox changes
+  acceptTos.addEventListener("change", () => {
+    clearStatus();
+    syncApproveEnabled();
+  });
 
   codeInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") approveVerification();
@@ -398,6 +411,9 @@
     const v = normalizeCode(q);
     if (v) codeInput.value = v;
   })();
+
+  // ✅ Set initial approve button state on load
+  syncApproveEnabled();
 
   approveBtn.addEventListener("click", approveVerification);
   cancelBtn.addEventListener("click", cancelVerification);
@@ -466,6 +482,10 @@
     clearStatus();
     codeInput.value = "";
     if (acceptTos) acceptTos.checked = false;
+
+    // ✅ Keep approve button disabled after cancel
+    syncApproveEnabled();
+
     showStatus("Cancelled. You can close this page.", "");
   }
 </script>
