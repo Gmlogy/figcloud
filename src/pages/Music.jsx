@@ -343,7 +343,8 @@ export default function MusicPage() {
   const viewIcon = (v) => {
     if (v === "Songs") return <Music className="w-4 h-4" />;
     if (v === "Artists") return <Users className="w-4 h-4" />;
-    return <Disc className="w-4 h-4" />;
+    if (v === "Albums") return <Disc className="w-4 h-4" />;
+    return <ListMusic className="w-4 h-4" />;
   };
 
   const renderSongs = () => {
@@ -352,151 +353,116 @@ export default function MusicPage() {
     }
 
     return (
-      <div className="flex-1 overflow-y-auto pb-32">
-        <div className="px-3 py-3">
-          <div className="hidden md:flex items-center gap-3 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
-            <span className="w-8">#</span>
-            <span className="w-10"></span>
-            <span className="flex-1">Title</span>
-            <span className="hidden lg:block w-44">Artist</span>
-            <span className="hidden xl:block w-44">Album</span>
-            <span className="w-16 text-right">Time</span>
-            <span className="w-28 text-right">Size</span>
-            <span className="w-28"></span>
+      <div className="flex-1 overflow-y-auto bg-[#fcfcfd] pb-32">
+        <div className="min-w-[900px]">
+          <div
+            className="grid items-center px-6 h-11 text-[12px] font-semibold uppercase tracking-[0.12em] text-slate-400 border-b bg-white sticky top-0 z-10"
+            style={{
+              gridTemplateColumns: "52px minmax(320px, 1fr) minmax(180px, 260px) 70px 40px",
+              borderColor: "#edf0f3",
+            }}
+          >
+            <div>#</div>
+            <div>Title</div>
+            <div className="text-right pr-8">Album</div>
+            <div className="text-right">Time</div>
+            <div></div>
           </div>
 
-          <div className="space-y-1">
-            {filteredTracks.map((t, i) => {
-              const id = t.musicId || t.id;
-              const title =
-                safeText(t.title) || safeText(t.fileName || t.file_name) || "Unknown title";
-              const artist = safeText(t.artist) || "Unknown artist";
-              const album = safeText(t.album) || "Unknown album";
-              const duration = formatDuration(t.durationMs);
-              const size = formatBytes(t.sizeBytes);
-              const isActive = activeId === id;
+          {filteredTracks.map((t, i) => {
+            const id = t.musicId || t.id;
+            const title =
+              safeText(t.title) || safeText(t.fileName || t.file_name) || "Unknown title";
+            const artist = safeText(t.artist) || "Unknown artist";
+            const album = safeText(t.album) || "";
+            const duration = formatDuration(t.durationMs);
+            const isActive = activeId === id;
 
-              return (
-                <motion.div
-                  key={id}
-                  layout
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.18 }}
-                  className="group rounded-2xl border px-3 py-2 flex items-center gap-3"
-                  style={{
-                    background: isActive
-                      ? "rgb(var(--md-sys-color-primary-container))"
-                      : "rgb(var(--md-sys-color-surface-container-low))",
-                    borderColor: "rgb(var(--md-sys-color-outline-variant))",
-                  }}
-                >
-                  <div className="w-8 text-xs text-slate-400 text-center hidden md:block">
-                    {i + 1}
-                  </div>
-
+            return (
+              <div
+                key={id}
+                className={`grid items-center px-6 h-[58px] transition-colors border-b group ${
+                  isActive ? "bg-slate-100" : "bg-transparent hover:bg-slate-50"
+                }`}
+                style={{
+                  gridTemplateColumns: "52px minmax(320px, 1fr) minmax(180px, 260px) 70px 40px",
+                  borderColor: "#f2f4f7",
+                }}
+              >
+                <div className="flex items-center justify-center text-slate-400 text-sm font-medium">
                   <button
                     onClick={() => toggleTrack(t, filteredTracks, i)}
-                    className="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0"
-                    style={{
-                      background: isActive
-                        ? "rgba(255,255,255,0.35)"
-                        : "rgb(var(--md-sys-color-surface-container-high))",
-                      borderColor: "rgb(var(--md-sys-color-outline-variant))",
-                    }}
+                    className="w-7 h-7 flex items-center justify-center rounded-md opacity-80 hover:opacity-100"
+                    title={isActive && isPlaying ? "Pause" : "Play"}
                   >
                     {isActive && isPlaying ? (
-                      <Pause className="w-4 h-4" />
+                      <Pause className="w-4 h-4 text-slate-700" />
                     ) : (
-                      <Play className="w-4 h-4 ml-0.5" />
+                      <>
+                        <span className="group-hover:hidden">{i + 1}</span>
+                        <Play className="w-4 h-4 text-slate-700 hidden group-hover:block ml-0.5" />
+                      </>
                     )}
                   </button>
+                </div>
 
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 overflow-hidden"
-                    style={{ background: "rgb(var(--md-sys-color-secondary-container))" }}
-                  >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center shrink-0 overflow-hidden">
                     {t.album_art_url ? (
                       <img src={t.album_art_url} alt="" className="w-full h-full object-cover" />
                     ) : (
-                      <Music className="w-4 h-4" style={{ color: "rgb(var(--md-sys-color-on-secondary-container))" }} />
+                      <Music className="w-4 h-4 text-slate-700" />
                     )}
                   </div>
 
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate" style={{ color: "rgb(var(--md-sys-color-on-surface))" }}>
+                  <div className="min-w-0">
+                    <p className="truncate text-[15px] font-semibold text-slate-800 leading-5">
                       {title}
                     </p>
-                    <p className="text-sm truncate md:hidden text-slate-500">
-                      {artist} • {album}
-                    </p>
+                    <p className="truncate text-[14px] text-slate-500 leading-5">{artist}</p>
                   </div>
+                </div>
 
-                  <div className="hidden lg:block w-44 min-w-0">
-                    <p className="text-sm truncate text-slate-500">{artist}</p>
-                  </div>
+                <div className="truncate text-right pr-8 text-[15px] text-slate-400">
+                  {album || "—"}
+                </div>
 
-                  <div className="hidden xl:block w-44 min-w-0">
-                    <p className="text-sm truncate text-slate-500">{album}</p>
-                  </div>
+                <div className="text-right text-[15px] text-slate-400 font-medium">
+                  {duration || "—"}
+                </div>
 
-                  <div className="w-16 text-sm text-right text-slate-500">{duration}</div>
-                  <div className="w-28 text-sm text-right text-slate-500 hidden md:block">{size}</div>
+                <div className="flex items-center justify-end">
+                  <button
+                    onClick={() => downloadTrack(t)}
+                    className="w-8 h-8 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 opacity-0 group-hover:opacity-100 transition"
+                    title="Download"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
 
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() => downloadTrack(t)}
-                      className="px-3 py-2 rounded-xl border hidden md:flex items-center gap-2"
-                      style={{
-                        background: "rgb(var(--md-sys-color-surface-container-high))",
-                        borderColor: "rgb(var(--md-sys-color-outline-variant))",
-                      }}
-                      title="Download"
-                    >
-                      <Download className="w-4 h-4" />
-                    </button>
-
-                    {t.file_url ? (
-                      <a
-                        href={t.file_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-3 py-2 rounded-xl border hidden md:flex items-center gap-2"
-                        style={{
-                          background: "rgb(var(--md-sys-color-surface-container-high))",
-                          borderColor: "rgb(var(--md-sys-color-outline-variant))",
-                        }}
-                        title="Open"
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                      </a>
-                    ) : null}
-                  </div>
-                </motion.div>
-              );
-            })}
-          </div>
-
-          <div className="mt-6 flex items-center justify-center">
-            {hasMore ? (
+          {hasMore && (
+            <div className="flex items-center justify-center py-6">
               <button
                 onClick={handleLoadMore}
                 disabled={isLoadingMore}
-                className="px-5 py-3 rounded-2xl border flex items-center gap-3"
-                style={{
-                  background: "rgb(var(--md-sys-color-primary-container))",
-                  borderColor: "rgb(var(--md-sys-color-outline-variant))",
-                  color: "rgb(var(--md-sys-color-on-primary-container))",
-                  opacity: isLoadingMore ? 0.85 : 1,
-                }}
+                className="px-4 py-2 rounded-xl border bg-white text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60 flex items-center gap-2"
+                style={{ borderColor: "#e5e7eb" }}
               >
-                {isLoadingMore ? <Loader2 className="w-5 h-5 animate-spin" /> : <ListMusic className="w-5 h-5" />}
-                <span className="font-medium">{isLoadingMore ? "Loading..." : "Load more"}</span>
+                {isLoadingMore ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <ListMusic className="w-4 h-4" />
+                )}
+                {isLoadingMore ? "Loading..." : "Load more"}
               </button>
-            ) : null}
-          </div>
+            </div>
+          )}
 
-          <div ref={sentinelRef} className="h-10" />
+          <div ref={sentinelRef} className="h-8" />
         </div>
       </div>
     );
@@ -507,9 +473,9 @@ export default function MusicPage() {
       const artistTracks = artistMap[selectedGroup] || [];
 
       return (
-        <div className="flex-1 overflow-y-auto pb-32">
+        <div className="flex-1 overflow-y-auto pb-32 bg-[#fcfcfd]">
           <div
-            className="px-6 py-4 flex items-center gap-3 border-b"
+            className="px-6 py-4 flex items-center gap-3 border-b bg-white"
             style={{ borderColor: "rgb(var(--md-sys-color-outline-variant))" }}
           >
             <button
@@ -578,7 +544,7 @@ export default function MusicPage() {
     if (!artists.length) return <EmptyLibrary search={search} />;
 
     return (
-      <div className="flex-1 overflow-y-auto pb-32 p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-7 gap-4 content-start">
+      <div className="flex-1 overflow-y-auto pb-32 p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-7 gap-4 content-start bg-[#fcfcfd]">
         {artists.map((artist) => {
           const artistTracks = artistMap[artist];
           const art = artistTracks.find((t) => t.album_art_url)?.album_art_url;
@@ -627,9 +593,9 @@ export default function MusicPage() {
       const albumTracks = album?.tracks || [];
 
       return (
-        <div className="flex-1 overflow-y-auto pb-32">
+        <div className="flex-1 overflow-y-auto pb-32 bg-[#fcfcfd]">
           <div
-            className="flex items-center gap-6 px-8 py-6 border-b"
+            className="flex items-center gap-6 px-8 py-6 border-b bg-white"
             style={{ borderColor: "rgb(var(--md-sys-color-outline-variant))" }}
           >
             <div
@@ -731,7 +697,7 @@ export default function MusicPage() {
     if (!albums.length) return <EmptyLibrary search={search} />;
 
     return (
-      <div className="flex-1 overflow-y-auto pb-32 p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-7 gap-4 content-start">
+      <div className="flex-1 overflow-y-auto pb-32 p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-7 gap-4 content-start bg-[#fcfcfd]">
         {albums.map((albumName) => {
           const info = albumMap[albumName];
 
@@ -776,7 +742,7 @@ export default function MusicPage() {
   const renderContent = () => {
     if (isLoading) {
       return (
-        <div className="flex-1 flex items-center justify-center gap-3 text-sm text-slate-500">
+        <div className="flex-1 flex items-center justify-center gap-3 text-sm text-slate-500 bg-[#fcfcfd]">
           <Loader2 className="w-5 h-5 animate-spin" />
           Loading library...
         </div>
@@ -789,21 +755,17 @@ export default function MusicPage() {
   };
 
   return (
-    <div className="h-full flex flex-col" style={{ background: "rgb(var(--md-sys-color-background))" }}>
-      {/* Top bar */}
+    <div className="h-full flex flex-col bg-[#fcfcfd]">
       <div
-        className="flex flex-col lg:flex-row lg:items-center gap-4 px-6 py-4 border-b shrink-0 bg-white"
+        className="flex items-center gap-4 px-6 py-5 border-b shrink-0 bg-white"
         style={{ borderColor: "rgb(var(--md-sys-color-outline-variant))" }}
       >
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           <Music className="w-6 h-6" style={{ color: "rgb(var(--md-sys-color-primary))" }} />
-          <div>
-            <h1 className="text-xl font-semibold">Music</h1>
-            <p className="text-sm text-slate-500">{tracks.length} tracks synced from your device</p>
-          </div>
+          <h1 className="text-[22px] font-semibold tracking-tight text-slate-900">Music</h1>
         </div>
 
-        <div className="flex flex-wrap gap-2 lg:ml-6">
+        <div className="flex gap-2 ml-6">
           {VIEWS.map((v) => (
             <button
               key={v}
@@ -811,7 +773,7 @@ export default function MusicPage() {
                 setView(v);
                 setSelectedGroup(null);
               }}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all ${
                 view === v ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"
               }`}
             >
@@ -821,32 +783,25 @@ export default function MusicPage() {
           ))}
         </div>
 
-        <div className="flex items-center gap-3 lg:ml-auto w-full lg:w-auto">
-          <div className="relative w-full lg:w-72">
+        <div className="ml-auto flex items-center gap-3">
+          <div className="relative w-[240px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search music..."
-              className="w-full pl-9 pr-3 py-2 rounded-full border bg-white outline-none text-sm"
-              style={{
-                borderColor: "rgb(var(--md-sys-color-outline-variant))",
-                color: "rgb(var(--md-sys-color-on-surface))",
-              }}
+              className="w-full pl-10 pr-4 py-2.5 rounded-full border bg-[#fafafa] outline-none text-sm text-slate-700"
+              style={{ borderColor: "#e5e7eb" }}
             />
           </div>
 
           <button
             onClick={handleRefresh}
-            className="px-3 py-2 rounded-xl border flex items-center gap-2 shrink-0"
-            style={{
-              background: "rgb(var(--md-sys-color-surface-container-low))",
-              borderColor: "rgb(var(--md-sys-color-outline-variant))",
-              color: "rgb(var(--md-sys-color-on-surface))",
-            }}
+            className="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 bg-white hover:bg-slate-50"
+            style={{ borderColor: "#e5e7eb" }}
             title="Refresh"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className="w-4 h-4 text-slate-600" />
           </button>
         </div>
       </div>
@@ -873,26 +828,20 @@ export default function MusicPage() {
 
       {currentTrack ? (
         <div
-          className="border-t px-4 py-3 shrink-0"
-          style={{
-            background: "rgb(var(--md-sys-color-surface))",
-            borderColor: "rgb(var(--md-sys-color-outline-variant))",
-          }}
+          className="border-t px-4 py-3 shrink-0 bg-white"
+          style={{ borderColor: "rgb(var(--md-sys-color-outline-variant))" }}
         >
           <div className="flex items-center gap-4">
-            <div
-              className="w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden shrink-0"
-              style={{ background: "rgb(var(--md-sys-color-primary-container))" }}
-            >
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden shrink-0 bg-blue-100">
               {currentTrack.album_art_url ? (
                 <img src={currentTrack.album_art_url} alt="" className="w-full h-full object-cover" />
               ) : (
-                <Music className="w-5 h-5" style={{ color: "rgb(var(--md-sys-color-on-primary-container))" }} />
+                <Music className="w-5 h-5 text-slate-700" />
               )}
             </div>
 
             <div className="min-w-0 flex-1">
-              <p className="font-medium truncate">
+              <p className="font-medium truncate text-slate-900">
                 {safeText(currentTrack.title) ||
                   safeText(currentTrack.fileName || currentTrack.file_name) ||
                   "Unknown title"}
@@ -906,13 +855,10 @@ export default function MusicPage() {
               <button
                 onClick={playPrev}
                 disabled={currentIndex <= 0}
-                className="w-10 h-10 rounded-xl border flex items-center justify-center disabled:opacity-40"
-                style={{
-                  background: "rgb(var(--md-sys-color-surface-container-low))",
-                  borderColor: "rgb(var(--md-sys-color-outline-variant))",
-                }}
+                className="w-10 h-10 rounded-xl border flex items-center justify-center disabled:opacity-40 bg-white hover:bg-slate-50"
+                style={{ borderColor: "#e5e7eb" }}
               >
-                <SkipBack className="w-4 h-4" />
+                <SkipBack className="w-4 h-4 text-slate-700" />
               </button>
 
               <button
@@ -925,12 +871,8 @@ export default function MusicPage() {
                     a.pause();
                   }
                 }}
-                className="w-12 h-12 rounded-xl border flex items-center justify-center"
-                style={{
-                  background: "rgb(var(--md-sys-color-primary-container))",
-                  borderColor: "rgb(var(--md-sys-color-outline-variant))",
-                  color: "rgb(var(--md-sys-color-on-primary-container))",
-                }}
+                className="w-12 h-12 rounded-xl border flex items-center justify-center bg-blue-600 text-white"
+                style={{ borderColor: "#2563eb" }}
               >
                 {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 ml-0.5" />}
               </button>
@@ -938,20 +880,32 @@ export default function MusicPage() {
               <button
                 onClick={playNext}
                 disabled={currentIndex >= queue.length - 1}
-                className="w-10 h-10 rounded-xl border flex items-center justify-center disabled:opacity-40"
-                style={{
-                  background: "rgb(var(--md-sys-color-surface-container-low))",
-                  borderColor: "rgb(var(--md-sys-color-outline-variant))",
-                }}
+                className="w-10 h-10 rounded-xl border flex items-center justify-center disabled:opacity-40 bg-white hover:bg-slate-50"
+                style={{ borderColor: "#e5e7eb" }}
               >
-                <SkipForward className="w-4 h-4" />
+                <SkipForward className="w-4 h-4 text-slate-700" />
               </button>
             </div>
 
             <div className="hidden md:flex items-center gap-2 text-slate-500">
               <Volume2 className="w-4 h-4" />
-              <span className="text-sm">{formatDuration(currentTrack.durationMs)}</span>
+              <span className="text-sm">
+                {formatDuration(currentTrack.durationMs)} • {formatBytes(currentTrack.sizeBytes)}
+              </span>
             </div>
+
+            {currentTrack.file_url ? (
+              <a
+                href={currentTrack.file_url}
+                target="_blank"
+                rel="noreferrer"
+                className="hidden md:flex w-10 h-10 rounded-xl border items-center justify-center bg-white hover:bg-slate-50"
+                style={{ borderColor: "#e5e7eb" }}
+                title="Open"
+              >
+                <ExternalLink className="w-4 h-4 text-slate-700" />
+              </a>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -974,12 +928,9 @@ export default function MusicPage() {
 
 function EmptyLibrary({ search }) {
   return (
-    <div className="flex-1 flex items-center justify-center flex-col gap-4 pb-20">
-      <div
-        className="w-20 h-20 rounded-3xl flex items-center justify-center"
-        style={{ background: "rgb(var(--md-sys-color-primary-container))" }}
-      >
-        <Music className="w-10 h-10" style={{ color: "rgb(var(--md-sys-color-on-primary-container))" }} />
+    <div className="flex-1 flex items-center justify-center flex-col gap-4 pb-20 bg-[#fcfcfd]">
+      <div className="w-20 h-20 rounded-3xl flex items-center justify-center bg-blue-100">
+        <Music className="w-10 h-10 text-slate-700" />
       </div>
 
       <h2 className="text-xl font-semibold text-slate-700">
