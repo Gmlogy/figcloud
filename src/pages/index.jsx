@@ -18,6 +18,8 @@ import Settings from "./Settings";
 import Photos from "./Photos";
 import MusicPage from "./Music";
 import Contacts from "./Contacts";
+import NotesPage from "./Notes";
+import CalendarPage from "./Calendar";
 import ReverseSync from "./ReverseSync";
 import FindPhone from "./FindPhone";
 import PhoneVerificationModal from "../components/auth/PhoneVerificationModal";
@@ -28,6 +30,8 @@ const PAGES = {
   Settings,
   Photos,
   Contacts,
+  Notes: NotesPage,
+  Calendar: CalendarPage,
   ReverseSync,
   FindPhone,
 };
@@ -90,6 +94,8 @@ function PagesContent({ signOut }) {
         <Route path="/Photos" element={<Photos />} />
         <Route path="/Music" element={<MusicPage />} />
         <Route path="/Contacts" element={<Contacts />} />
+        <Route path="/Notes" element={<NotesPage />} />
+        <Route path="/Calendar" element={<CalendarPage />} />
         <Route path="/ReverseSync" element={<ReverseSync />} />
         <Route path="/FindPhone" element={<FindPhone />} />
       </Routes>
