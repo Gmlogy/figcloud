@@ -1,7 +1,7 @@
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { createPageUrl } from "@/utils";
-import { MessageSquare, Smartphone, Settings, Shield, Wifi, Users, Camera, Download, LogOut, Music } from "lucide-react";
+import { MessageSquare, Smartphone, Settings, Shield, Wifi, Users, Camera, Download, LogOut, Music, FileText, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Sidebar,
@@ -37,6 +37,16 @@ const navigationItems = [
     title: "Contacts",
     url: createPageUrl("Contacts"),
     icon: Users,
+  },
+  {
+    title: "Notes",
+    url: createPageUrl("Notes"),
+    icon: FileText,
+  },
+  {
+    title: "Calendar",
+    url: createPageUrl("Calendar"),
+    icon: Calendar,
   },
   {
     title: "Device Recovery",
