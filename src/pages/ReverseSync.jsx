@@ -10,6 +10,7 @@ import {
   MessageSquare,
   Users,
   Camera,
+  Headphones,
   Clock,
   AlertTriangle,
   ArrowDown,
@@ -68,12 +69,13 @@ function statusBadge(status) {
 
 export default function ReverseSyncPage() {
   const [reverseSyncRequests, setReverseSyncRequests] = useState([]);
-  const [availableData, setAvailableData] = useState({ messages: 0, contacts: 0, photos: 0 });
+  const [availableData, setAvailableData] = useState({ messages: 0, contacts: 0, photos: 0, music: 0 });
 
   const [selectedOptions, setSelectedOptions] = useState({
     include_messages: false,
     include_contacts: false,
     include_photos: false,
+    include_music: false,
   });
 
   const [currentUser, setCurrentUser] = useState(null);
@@ -91,14 +93,15 @@ export default function ReverseSyncPage() {
   const totalSelectedItems =
     (selectedOptions.include_messages ? availableData.messages : 0) +
     (selectedOptions.include_contacts ? availableData.contacts : 0) +
-    (selectedOptions.include_photos ? availableData.photos : 0);
+    (selectedOptions.include_photos ? availableData.photos : 0) +
+    (selectedOptions.include_music ? availableData.music : 0);
 
   const getSyncDescription = () => {
     const selected = Object.entries(selectedOptions)
       .filter(([, value]) => value)
       .map(([key]) => key.replace("include_", ""));
     if (selected.length === 0) return "No data selected";
-    if (selected.length === 3) return "All data (messages, contacts, photos)";
+    if (selected.length === 4) return "All data (messages, contacts, photos, music)";
     return selected.join(", ");
   };
 
@@ -121,6 +124,7 @@ export default function ReverseSyncPage() {
         messages: dataCounts?.messages?.items || dataCounts?.data?.messages?.items || 0,
         contacts: dataCounts?.contacts?.items || dataCounts?.data?.contacts?.items || 0,
         photos: dataCounts?.photos?.items || dataCounts?.data?.photos?.items || 0,
+        music: dataCounts?.music?.items || dataCounts?.data?.music?.items || 0,
       });
 
       const pendingArr = safeArray(pendingDevices)
@@ -133,7 +137,7 @@ export default function ReverseSyncPage() {
       setReverseSyncRequests(pendingArr);
     } catch (e) {
       console.error("Failed to load device recovery data:", e);
-      setAvailableData({ messages: 0, contacts: 0, photos: 0 });
+      setAvailableData({ messages: 0, contacts: 0, photos: 0, music: 0 });
       setReverseSyncRequests([]);
       setErrorMsg("Failed to load recovery data.");
     } finally {
@@ -162,6 +166,7 @@ export default function ReverseSyncPage() {
       include_messages: newValue,
       include_contacts: newValue,
       include_photos: newValue,
+      include_music: newValue,
     });
   };
 
@@ -248,6 +253,7 @@ export default function ReverseSyncPage() {
         include_messages: selectedOptions.include_messages,
         include_contacts: selectedOptions.include_contacts,
         include_photos: selectedOptions.include_photos,
+        include_music: selectedOptions.include_music,
       });
 
       // After success, mark as SENT immediately (Lambda should also write status)
@@ -451,6 +457,24 @@ export default function ReverseSyncPage() {
                       }
                     />
                   </div>
+
+                  <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <Headphones className="w-5 h-5 text-orange-600" />
+                      <div>
+                        <p className="font-medium">Music</p>
+                        <p className="text-sm text-slate-500">
+                          {availableData.music.toLocaleString()} music files
+                        </p>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={selectedOptions.include_music}
+                      onCheckedChange={(value) =>
+                        handleOptionChange("include_music", value)
+                      }
+                    />
+                  </div>
                 </div>
 
                 {totalSelectedItems > 0 && (
@@ -551,7 +575,7 @@ export default function ReverseSyncPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid md:grid-cols-3 gap-6">
+            <div className="grid md:grid-cols-4 gap-6">
               <StatCard
                 icon={<MessageSquare className="w-8 h-8 text-blue-600" />}
                 label="Messages"
@@ -571,6 +595,13 @@ export default function ReverseSyncPage() {
                 label="Photos"
                 count={availableData.photos}
                 colorClass="bg-purple-50"
+                isLoading={isLoading}
+              />
+              <StatCard
+                icon={<Headphones className="w-8 h-8 text-orange-600" />}
+                label="Music"
+                count={availableData.music}
+                colorClass="bg-orange-50"
                 isLoading={isLoading}
               />
             </div>
@@ -596,7 +627,7 @@ export default function ReverseSyncPage() {
                   </h3>
                   <p className="text-slate-500 max-w-md mx-auto">
                     When you connect a new device, you'll see it here and can
-                    recover your messages, contacts, and photos back to that
+                    recover your messages, contacts, photos, and music back to that
                     device.
                   </p>
 
