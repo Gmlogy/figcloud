@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FigCloud — Calendar Sync for Figphone</title>
+  <meta
+    name="description"
+    content="FigCloud helps Figphone users securely connect Google Calendar and keep events in sync across devices."
+  />
+  <style>
+    :root{
+      --bg: #7b7b7b;
+      --card: #ffffff;
+      --ink: #111827;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --panel: #f9fafb;
+      --accent: #7d7993;
+      --accent-2: #6c6883;
+      --focus: rgba(125,121,147,.22);
+      --shadow: 0 20px 60px rgba(0,0,0,.22);
+      --radius: 22px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+
+    body{
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      color: var(--ink);
+      background: var(--bg);
+      padding: 24px;
+    }
+
+    .wrap{
+      width: min(920px, 100%);
+      margin: 0 auto;
+    }
+
+    .card{
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 36px 36px 28px;
+    }
+
+    .hero{
+      display: grid;
+      grid-template-columns: 1.15fr .85fr;
+      gap: 28px;
+      align-items: center;
+    }
+
+    .brand{
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .logoRing{
+      width: 92px;
+      height: 92px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at 50% 35%, #ffffff 0%, #fafafa 65%, #f1f1f1 100%);
+      flex: 0 0 auto;
+    }
+
+    .logoRing img{
+      width: 54px;
+      height: 54px;
+      object-fit: contain;
+    }
+
+    .eyebrow{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      background: #fbfbfb;
+      color: #374151;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+
+    .eyebrowDot{
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--accent);
+      flex: 0 0 auto;
+    }
+
+    h1{
+      font-size: 42px;
+      line-height: 1.06;
+      letter-spacing: -0.03em;
+      margin: 0 0 14px;
+    }
+
+    .lead{
+      margin: 0;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.65;
+      max-width: 58ch;
+    }
+
+    .heroPanel{
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, #fcfcfd 0%, #f8f8fb 100%);
+      border-radius: 18px;
+      padding: 18px;
+    }
+
+    .heroPanelTitle{
+      font-size: 13px;
+      font-weight: 800;
+      color: #374151;
+      margin: 0 0 12px;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+    }
+
+    .featureList{
+      display: grid;
+      gap: 12px;
+    }
+
+    .featureItem{
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px 0;
+      border-top: 1px solid #eceef2;
+    }
+
+    .featureItem:first-child{
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .dot{
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--accent);
+      margin-top: 7px;
+      flex: 0 0 auto;
+    }
+
+    .featureText{
+      color: #374151;
+      font-size: 15px;
+      line-height: 1.55;
+    }
+
+    .featureText b{
+      color: #111827;
+    }
+
+    .actions{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 26px;
+    }
+
+    .btn{
+      min-height: 56px;
+      border-radius: 14px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      transition: transform .05s ease, background .15s ease, border-color .15s ease, opacity .15s ease;
+      user-select: none;
+      text-decoration: none;
+      padding: 0 20px;
+    }
+
+    .btn:active{ transform: translateY(1px); }
+
+    .btnPrimary{
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .btnPrimary:hover{
+      background: var(--accent-2);
+    }
+
+    .btnGhost{
+      background: #fff;
+      border-color: var(--line);
+      color: #374151;
+    }
+
+    .btnGhost:hover{
+      background: #fafafa;
+    }
+
+    .grid{
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-top: 30px;
+    }
+
+    .infoCard{
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 18px;
+      padding: 18px;
+    }
+
+    .infoCard h2{
+      margin: 0 0 10px;
+      font-size: 18px;
+      line-height: 1.25;
+      letter-spacing: -0.01em;
+    }
+
+    .infoCard p{
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .section{
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      background: #fbfbfb;
+      border-radius: 18px;
+      padding: 22px;
+    }
+
+    .sectionTitle{
+      font-size: 13px;
+      font-weight: 800;
+      color: #374151;
+      margin: 0 0 10px;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+    }
+
+    .section h3{
+      margin: 0 0 10px;
+      font-size: 24px;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+    }
+
+    .section p{
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.7;
+    }
+
+    .links{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 16px;
+      margin-top: 18px;
+    }
+
+    .links a{
+      color: var(--accent-2);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      font-weight: 600;
+    }
+
+    .foot{
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-top: 22px;
+      color: #6b7280;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .lock{
+      width: 18px;
+      height: 18px;
+      opacity: .85;
+      flex: 0 0 auto;
+      margin-top: 1px;
+    }
+
+    @media (max-width: 860px){
+      .hero{
+        grid-template-columns: 1fr;
+      }
+
+      .grid{
+        grid-template-columns: 1fr;
+      }
+
+      h1{
+        font-size: 34px;
+      }
+    }
+
+    @media (max-width: 480px){
+      body{
+        padding: 16px;
+      }
+
+      .card{
+        padding: 24px 18px 20px;
+      }
+
+      .brand{
+        align-items: flex-start;
+      }
+
+      .logoRing{
+        width: 76px;
+        height: 76px;
+      }
+
+      .logoRing img{
+        width: 46px;
+        height: 46px;
+      }
+
+      h1{
+        font-size: 28px;
+      }
+
+      .lead{
+        font-size: 15px;
+      }
+
+      .btn{
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="hero">
+        <div>
+          <div class="brand">
+            <div class="logoRing">
+              <img src="/calendar/login/fig-logo.png" alt="Fig logo" onerror="this.style.display='none'">
+            </div>
+          </div>
+
+          <div class="eyebrow">
+            <span class="eyebrowDot"></span>
+            <span>Fig Cloud for Figphone</span>
+          </div>
+
+          <h1>Secure calendar sync between your Figphone and the web</h1>
+          <p class="lead">
+            Fig Cloud is a companion service for Figphone users. It lets you connect your Google Calendar
+            account so your events can stay in sync across your Fig device and your web dashboard.
+          </p>
+
+          <div class="actions">
+            <a class="btn btnPrimary" href="https://figcloud.com/calendar/login">
+              Login / Connect Calendar →
+            </a>
+            <a class="btn btnGhost" href="https://figcloud.com/calendar/login/privacy-policy.html" target="_blank" rel="noopener noreferrer">
+              Privacy Policy
+            </a>
+          </div>
+        </div>
+
+        <div class="heroPanel">
+          <div class="heroPanelTitle">What Fig Cloud does</div>
+
+          <div class="featureList">
+            <div class="featureItem">
+              <div class="dot"></div>
+              <div class="featureText">
+                <b>Connects your Google Calendar</b> so you can authorize sync from your computer.
+              </div>
+            </div>
+
+            <div class="featureItem">
+              <div class="dot"></div>
+              <div class="featureText">
+                <b>Reads and writes calendar events</b> only to keep your calendar data updated between devices.
+              </div>
+            </div>
+
+            <div class="featureItem">
+              <div class="dot"></div>
+              <div class="featureText">
+                <b>Works for Figphone users</b> who want a secure cross-device calendar experience.
+              </div>
+            </div>
+
+            <div class="featureItem">
+              <div class="dot"></div>
+              <div class="featureText">
+                <b>User-initiated access only</b> — calendar permissions are requested only when you choose to connect your account.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="infoCard">
+          <h2>Purpose of the app</h2>
+          <p>
+            Fig Cloud is designed to help Figphone users manage and synchronize calendar events between their
+            phone and the web in a secure and simple way.
+          </p>
+        </div>
+
+        <div class="infoCard">
+          <h2>Google Calendar access</h2>
+          <p>
+            Fig Cloud requests Google Calendar access to read and write events needed for two-way synchronization
+            across the user’s connected Fig experience.
+          </p>
+        </div>
+
+        <div class="infoCard">
+          <h2>Who this is for</h2>
+          <p>
+            This service is intended for Figphone users who want to connect Google Calendar and keep their
+            schedules updated across supported Fig services.
+          </p>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="sectionTitle">How it works</div>
+        <h3>Connect your device, approve access, and keep events in sync</h3>
+        <p>
+          To get started, open the connection page, enter the verification code shown on your Figphone, and sign
+          in with Google on your computer. Once approved, Fig Cloud uses the granted calendar permission to help
+          keep your events synchronized across your connected device experience.
+        </p>
+
+        <div class="links">
+          <a href="https://figcloud.com/calendar/login">Open login page</a>
+          <a href="https://figcloud.com/calendar/login/terms.html" target="_blank" rel="noopener noreferrer">Terms of Service</a>
+          <a href="https://figcloud.com/calendar/login/privacy-policy.html" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+          <a href="mailto:support@figcloud.com">support@figcloud.com</a>
+        </div>
+      </div>
+
+      <div class="foot">
+        <svg class="lock" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M7 10V8a5 5 0 0 1 10 0v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M6 10h12a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="2"/>
+          <path d="M12 14v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span>
+          Fig Cloud uses secure, user-authorized access for Google Calendar connection and provides public links
+          to its Terms of Service and Privacy Policy for transparency.
+        </span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
