@@ -7,6 +7,7 @@ import { motion } from "framer-motion";
 import { getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
 import { api } from "@/lib/api";
 import { normalizePhoneNumber } from "@/utils/phoneUtils";
+import { parseTimestamp } from "../utils/dateUtils";
 
 import ConversationList from "../components/messages/ConversationList";
 import MessageThread from "../components/messages/MessageThread";
@@ -66,7 +67,8 @@ function toEpochMs(input) {
   }
 
   if (typeof input === "string") {
-    const s = input.trim();
+    // Strip #sms{id} or #mms{id} dedup suffixes from DynamoDB timestamps
+    const s = input.trim().split('#')[0];
     if (!s) return Date.now();
 
     if (/^\d+$/.test(s)) {
@@ -363,6 +365,145 @@ function computeDisplayBody(message) {
 
   return body;
 }
+
+
+function extractAddressCandidates(value) {
+  if (!value) return [];
+
+  const out = [];
+  const push = (v) => {
+    const s = safeStr(v).trim();
+    if (s) out.push(s);
+  };
+
+  if (typeof value === "string") {
+    push(value);
+  } else if (Array.isArray(value)) {
+    value.forEach((item) => {
+      if (typeof item === "string") {
+        push(item);
+        return;
+      }
+
+      if (item && typeof item === "object") {
+        push(
+          item.address ||
+          item.phone_number ||
+          item.phoneNumber ||
+          item.phone ||
+          item.number ||
+          item.value ||
+          item.recipient
+        );
+      }
+    });
+  } else if (typeof value === "object") {
+    push(
+      value.address ||
+      value.phone_number ||
+      value.phoneNumber ||
+      value.phone ||
+      value.number ||
+      value.value ||
+      value.recipient
+    );
+  }
+
+  return Array.from(new Set(out));
+}
+
+function extractGroupParticipants(message, currentUser, lookupContact) {
+  const rawCandidates = [
+    ...extractAddressCandidates(message?.addresses),
+    ...extractAddressCandidates(message?.participants),
+    ...extractAddressCandidates(message?.recipients),
+    ...extractAddressCandidates(message?.to),
+    ...extractAddressCandidates(message?.raw?.addresses),
+    ...extractAddressCandidates(message?.raw?.participants),
+    ...extractAddressCandidates(message?.raw?.recipients),
+    ...extractAddressCandidates(message?.raw?.to),
+    ...extractAddressCandidates(message?.address),
+    ...extractAddressCandidates(message?.phone_number),
+    ...extractAddressCandidates(message?.raw?.address),
+    ...extractAddressCandidates(message?.raw?.phone_number),
+  ];
+
+  const myRaw = currentUser?.phone_number || currentUser?.phoneNumber || "";
+
+  const myKeys = new Set(
+    [
+      canonicalPhoneKey(myRaw),
+      canonicalPhoneKey(normalizePhoneNumber(myRaw)),
+      digitsOnly(myRaw),
+      normalizePhoneNumber(myRaw),
+      safeStr(myRaw),
+    ].filter(Boolean)
+  );
+
+  const participantMap = new Map();
+
+  rawCandidates.forEach((raw) => {
+    const canonical =
+      canonicalPhoneKey(raw) ||
+      canonicalPhoneKey(normalizePhoneNumber(raw)) ||
+      digitsOnly(raw) ||
+      normalizePhoneNumber(raw) ||
+      safeStr(raw);
+
+    if (!canonical) return;
+    if (myKeys.has(canonical)) return;
+
+    const hit = lookupContact(raw);
+    const contact = hit?.contact || null;
+
+    const displayNumber = hit?.displayNumber || normalizePhoneNumber(raw) || safeStr(raw);
+
+    const displayName =
+      contact?.full_name ||
+      contact?.contact_name ||
+      contact?.name ||
+      contact?.display_name ||
+      displayNumber;
+
+    if (!participantMap.has(canonical)) {
+      participantMap.set(canonical, {
+        canonical,
+        raw,
+        displayNumber,
+        displayName,
+      });
+    }
+  });
+
+  return Array.from(participantMap.values());
+}
+
+function buildGroupMeta(message, currentUser, lookupContact) {
+  const participants = extractGroupParticipants(message, currentUser, lookupContact);
+
+  const names = participants.map((p) => p.displayName).filter(Boolean);
+
+  const groupName =
+    safeStr(message?.group_name) ||
+    safeStr(message?.groupName) ||
+    safeStr(message?.conversation_name) ||
+    safeStr(message?.conversationName) ||
+    safeStr(message?.subject) ||
+    safeStr(message?.raw?.group_name) ||
+    safeStr(message?.raw?.groupName) ||
+    safeStr(message?.raw?.conversation_name) ||
+    safeStr(message?.raw?.conversationName) ||
+    safeStr(message?.raw?.subject) ||
+    names.join(", ");
+
+  return {
+    participants,
+    participant_count: participants.length,
+    group_name: groupName || "Group chat",
+    display_subtitle: names.length > 0 ? names.join(", ") : "Group conversation",
+  };
+}
+
 
 export default function DashboardPage() {
   const [messages, setMessages] = useState([]);
@@ -880,15 +1021,28 @@ export default function DashboardPage() {
         normalizePhoneNumber(addrRaw) ||
         safeStr(addrRaw);
 
-      // if we have no remote key at all, skip
-      if (!remoteKey && !canonicalMeKey) return acc;
+      const isGroupMessage =
+        message?.is_group === true ||
+        (Array.isArray(message?.addresses) && message.addresses.length > 1) ||
+        (Array.isArray(message?.participants) && message.participants.length > 1) ||
+        (Array.isArray(message?.recipients) && message.recipients.length > 1);
+
+      const backendThreadId =
+        message?.threadId ??
+        message?.thread_id ??
+        message?.raw?.threadId ??
+        message?.raw?.thread_id;
+
+      if (!remoteKey && !canonicalMeKey && backendThreadId == null) return acc;
 
       let threadId;
-      if (canonicalMeKey) {
+      if (isGroupMessage && backendThreadId != null) {
+        threadId = String(backendThreadId);
+      } else if (canonicalMeKey) {
         const participants = [canonicalMeKey, remoteKey].filter(Boolean).sort();
         threadId = participants.join("_");
       } else {
-        threadId = remoteKey || safeStr(addrRaw) || "unknown";
+        threadId = remoteKey || safeStr(addrRaw) || String(backendThreadId || "unknown");
       }
 
       if (!acc[threadId]) {
@@ -902,6 +1056,10 @@ export default function DashboardPage() {
         const displayNumber =
           hit?.displayNumber || normalizePhoneNumber(addrRaw) || safeStr(addrRaw);
 
+        const groupMeta = isGroupMessage
+          ? buildGroupMeta(message, currentUser, lookupContact)
+          : null;
+
         acc[threadId] = {
           thread_id: threadId,
           contact_name: contactName || displayNumber,
@@ -909,19 +1067,52 @@ export default function DashboardPage() {
           messages: [],
           last_message: null,
           unread_count: 0,
-          is_group: message.is_group || false,
+          is_group: isGroupMessage,
+          group_name: groupMeta?.group_name || "",
+          display_subtitle: groupMeta?.display_subtitle || "",
+          participant_count: groupMeta?.participant_count || 0,
+          participants: groupMeta?.participants || [],
         };
       } else {
-        // ✅ If this thread was created earlier without name, upgrade it when contact resolves
         const existing = acc[threadId];
+
         const contactName =
           contact?.full_name ||
           contact?.contact_name ||
           contact?.name ||
           contact?.display_name ||
           "";
+
         if (contactName && (existing.contact_name === existing.phone_number || !existing.contact_name)) {
           existing.contact_name = contactName;
+        }
+
+        if (!existing.is_group && isGroupMessage) {
+          existing.is_group = true;
+        }
+
+        if (isGroupMessage) {
+          const groupMeta = buildGroupMeta(message, currentUser, lookupContact);
+
+          const mergedMap = new Map();
+
+          [...(existing.participants || []), ...(groupMeta.participants || [])].forEach((p) => {
+            if (!p?.canonical) return;
+            if (!mergedMap.has(p.canonical)) mergedMap.set(p.canonical, p);
+          });
+
+          const mergedParticipants = Array.from(mergedMap.values());
+          const mergedNames = mergedParticipants.map((p) => p.displayName).filter(Boolean);
+
+          existing.participants = mergedParticipants;
+          existing.participant_count = mergedParticipants.length;
+          existing.group_name =
+            existing.group_name ||
+            groupMeta.group_name ||
+            mergedNames.join(", ") ||
+            "Group chat";
+          existing.display_subtitle =
+            mergedNames.join(", ") || existing.display_subtitle || "Group conversation";
         }
       }
 
@@ -939,6 +1130,14 @@ export default function DashboardPage() {
 
       const displayBody = computeDisplayBody(message);
 
+      const senderName =
+        contact?.full_name ||
+        contact?.contact_name ||
+        contact?.name ||
+        contact?.display_name ||
+        normalizePhoneNumber(addrRaw) ||
+        safeStr(addrRaw);
+
       acc[threadId].messages.push({
         id: message.messageId || timestamp,
         messageId: message.messageId || message.id || null,
@@ -946,16 +1145,14 @@ export default function DashboardPage() {
         timestamp,
         is_sent: isSent,
         sync_status: "synced",
-
         is_mms: isMms,
         kind,
         text,
         attachments,
-
+        contact_name: senderName,
         raw: message,
       });
 
-      // UNREAD LOGIC
       const msgMs = toEpochMs(timestamp);
       const isIncoming = !isSent;
 
@@ -987,6 +1184,7 @@ export default function DashboardPage() {
           message_content: displayBody,
           is_sent: isSent,
           timestamp,
+          contact_name: senderName,
         };
       }
 
@@ -996,20 +1194,25 @@ export default function DashboardPage() {
 
   const allConversations = useMemo(() => {
     const merged = { ...conversations, ...ephemeralConversations };
+
     Object.values(merged).forEach((conv) => {
-      conv.display_name = conv.contact_name || conv.phone_number;
+      conv.display_name = conv.is_group
+        ? conv.group_name || conv.display_subtitle || "Group chat"
+        : conv.contact_name || conv.phone_number;
+
       if (conv.messages) {
-        conv.messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        conv.messages.sort((a, b) => parseTimestamp(a.timestamp) - parseTimestamp(b.timestamp));
       }
     });
+
     return merged;
   }, [conversations, ephemeralConversations]);
 
   const conversationList = useMemo(() => {
     return Object.values(allConversations)
       .sort((a, b) => {
-        const dateA = a.last_message ? new Date(a.last_message.timestamp) : new Date(0);
-        const dateB = b.last_message ? new Date(b.last_message.timestamp) : new Date(0);
+        const dateA = a.last_message ? parseTimestamp(a.last_message.timestamp) : new Date(0);
+        const dateB = b.last_message ? parseTimestamp(b.last_message.timestamp) : new Date(0);
         return dateB - dateA;
       })
       .filter((conv) => {
