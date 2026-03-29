@@ -19,12 +19,105 @@ import {
   Upload,
 } from "lucide-react";
 import { format } from "date-fns";
+import { parseTimestamp } from "../utils/dateUtils";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
 import ContactsActionsToolbar from "../components/contacts/ContactsActionsToolbar";
 
 // ✅ shadcn/ui toast
 import { useToast } from "@/components/ui/use-toast";
+
+
+const safeStr = (value) => (typeof value === "string" ? value.trim() : "");
+
+const digitsOnly = (value) => String(value || "").replace(/\D+/g, "");
+
+const normalizeName = (value) =>
+  safeStr(value)
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+const normalizeEmail = (value) => safeStr(value).toLowerCase();
+
+const normalizePhone = (value) => {
+  const digits = digitsOnly(value);
+  if (!digits) return "";
+  return digits.length > 10 ? digits.slice(-10) : digits;
+};
+
+const buildContactDedupeKey = (contact) => {
+  const nameKey = normalizeName(contact?.full_name);
+  const phoneKey = normalizePhone(contact?.phone_number);
+  const emailKey = normalizeEmail(contact?.email);
+
+  if (phoneKey) return `phone:${phoneKey}`;
+  if (emailKey) return `email:${emailKey}`;
+  if (nameKey) return `name:${nameKey}`;
+
+  const companyKey = normalizeName(contact?.company);
+  const titleKey = normalizeName(contact?.job_title);
+  return `fallback:${nameKey}|${phoneKey}|${emailKey}|${companyKey}|${titleKey}`;
+};
+
+const scoreContactForDedup = (contact) => {
+  let score = 0;
+  if (safeStr(contact?.full_name)) score += 4;
+  if (normalizePhone(contact?.phone_number)) score += 4;
+  if (normalizeEmail(contact?.email)) score += 3;
+  if (safeStr(contact?.company)) score += 1;
+  if (safeStr(contact?.job_title)) score += 1;
+  if (safeStr(contact?.photo_url)) score += 1;
+  if (safeStr(contact?.contactId)) score += 1;
+  return score;
+};
+
+const mergeDuplicateContacts = (primary, candidate) => {
+  const best = scoreContactForDedup(candidate) > scoreContactForDedup(primary) ? candidate : primary;
+  const fallback = best === primary ? candidate : primary;
+
+  return {
+    ...fallback,
+    ...best,
+    contactId: best?.contactId || fallback?.contactId || buildContactDedupeKey(best || fallback),
+    full_name: safeStr(best?.full_name) || safeStr(fallback?.full_name) || "",
+    phone_number: safeStr(best?.phone_number) || safeStr(fallback?.phone_number) || "",
+    email: safeStr(best?.email) || safeStr(fallback?.email) || "",
+    company: safeStr(best?.company) || safeStr(fallback?.company) || "",
+    job_title: safeStr(best?.job_title) || safeStr(fallback?.job_title) || "",
+    photo_url: safeStr(best?.photo_url) || safeStr(fallback?.photo_url) || "",
+  };
+};
+
+const dedupeContacts = (rawContacts) => {
+  const dedupedMap = new Map();
+
+  (Array.isArray(rawContacts) ? rawContacts : []).forEach((contact, index) => {
+    if (!contact || typeof contact !== "object") return;
+
+    const key = buildContactDedupeKey(contact) || `index:${index}`;
+    const normalized = {
+      ...contact,
+      contactId: contact?.contactId || key,
+      full_name: safeStr(contact?.full_name),
+      phone_number: safeStr(contact?.phone_number),
+      email: safeStr(contact?.email),
+      company: safeStr(contact?.company),
+      job_title: safeStr(contact?.job_title),
+      photo_url: safeStr(contact?.photo_url),
+    };
+
+    if (!dedupedMap.has(key)) {
+      dedupedMap.set(key, normalized);
+      return;
+    }
+
+    dedupedMap.set(key, mergeDuplicateContacts(dedupedMap.get(key), normalized));
+  });
+
+  return Array.from(dedupedMap.values()).sort((a, b) =>
+    (a.full_name || "").localeCompare(b.full_name || "")
+  );
+};
 
 export default function ContactsPage() {
   const { toast } = useToast();
@@ -110,16 +203,18 @@ export default function ContactsPage() {
     if (!isRefreshing) setIsLoading(true);
     try {
       const fetchedContacts = await api.get("/contacts");
-      fetchedContacts.sort((a, b) =>
-        (a.full_name || "").localeCompare(b.full_name || "")
-      );
-      setContacts(fetchedContacts);
+      const list = dedupeContacts(fetchedContacts);
+      setContacts(list);
     } catch (error) {
       console.error("Failed to load contacts:", error);
+      // Keep whatever contacts we already have instead of clearing them
       toast({
         variant: "destructive",
         title: "Failed to load contacts",
-        description: error?.message || "Please try again.",
+        description:
+          error?.message?.includes("500")
+            ? "Server took too long. Please try again in a moment."
+            : error?.message || "Please try again.",
       });
     } finally {
       setIsLoading(false);
@@ -373,12 +468,12 @@ export default function ContactsPage() {
     const parts = ["Google: linked"];
     if (googleStatus.lastGoogleSyncAt) {
       try {
-        parts.push(`↓ ${format(new Date(googleStatus.lastGoogleSyncAt), "PPp")}`);
+        parts.push(`↓ ${format(parseTimestamp(googleStatus.lastGoogleSyncAt), "PPp")}`);
       } catch {}
     }
     if (googleStatus.lastGooglePushAt) {
       try {
-        parts.push(`↑ ${format(new Date(googleStatus.lastGooglePushAt), "PPp")}`);
+        parts.push(`↑ ${format(parseTimestamp(googleStatus.lastGooglePushAt), "PPp")}`);
       } catch {}
     }
     return parts.join(" · ");
@@ -563,7 +658,7 @@ export default function ContactsPage() {
             <div className="flex items-center gap-4 text-sm text-slate-600">
               <div className="flex items-center gap-1">
                 <Users className="w-4 h-4" />
-                <span>{contacts.length} contacts synced</span>
+                <span>{contacts.length} unique contacts synced</span>
               </div>
             </div>
           </div>
